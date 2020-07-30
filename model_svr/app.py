@@ -10,11 +10,8 @@ from flask import Flask, jsonify, request, send_from_directory, render_template
 from flask_cors import CORS, cross_origin
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
-from flask_login import login_user, logout_user, login_required, LoginManager, current_user, UserMixin
+from flask_login import login_required, LoginManager, current_user, UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, BooleanField
-from wtforms.validators import ValidationError, Length
 
 from flask_wtf import CSRFProtect
 from flask_socketio import SocketIO
@@ -33,11 +30,15 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULT_FOLDER'] = RESULT_FOLDER
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///manager.db' + '?check_same_thread=False'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///model.db' + '?check_same_thread=False'  # todo 待修改
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 app.config['WTF_CSRF_ENABLED'] = False
 db = SQLAlchemy(app)
 app.secret_key = os.urandom(24)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'  # todo 绝对url 待修改成manager_svr的login服务
+login_manager.init_app(app=app)
+
 CSRFProtect(app)
 
 # enable CORS
@@ -105,12 +106,85 @@ class Result(db.Model):
         return '<DWI %r>' % self.filename
 
 
+class Patient(db.Model):
+    __tablename__ = 'patients'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80))
+    age = db.Column(db.Integer)
+    sex = db.Column(db.Integer)
+    info = db.Column(db.String)
+    doctor_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    docter = db.relationship('User', backref=db.backref('patients', lazy='dynamic'))
+
+    def __init__(self, username, doctor, age, sex, info):
+        self.username = username
+        self.docter = doctor
+        self.age = age
+        self.sex = sex
+        self.info = info
+
+    def __repr__(self):
+        return '<Patient %r>' % self.username
+
+
+# User==Doctor
+class User(db.Model, UserMixin):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), unique=True)
+    password = db.Column(db.String(200))
+    realname = db.Column(db.String(128), unique=False)
+    userType = db.Column(db.Integer)
+
+    def __init__(self, username, password, realname, userType=1):
+        password = generate_password_hash(password)
+        self.username = username
+        self.password = password
+        self.realname = realname
+        self.userType = userType
+
+    def check_password(self, password):
+        return check_password_hash(self.password, password)
+
+    def to_json(self):
+        return {'id': self.id, 'username': self.username,
+                'realname': self.realname, 'usertype': self.userType}
+
+    @property
+    def is_authenticated(self):
+        return True
+
+    @property
+    def is_active(self):
+        return True
+
+    @property
+    def is_anonymous(self):
+        return False
+
+    def get_id(self):
+        return str(self.id)
+
+    def __repr__(self):
+        return '<User %r>' % (self.username)
+
+
 db.create_all()
 
 FILE_LIST = []
 
 
-# model_svr
+# load_user 加载当前登陆用户验证
+@login_manager.user_loader
+def load_user(userid):
+    return User.query.get(int(userid))
+
+
+def _get_current_user():
+    return load_user(current_user.id)
+
+
+# add_item 增加ctimg信息
 def add_item(id, img_type, filename, uploadname, cttime=None):
     patient = Patient.query.filter_by(id=id).first()
     doctor = _get_current_user()
@@ -122,21 +196,20 @@ def add_item(id, img_type, filename, uploadname, cttime=None):
     return "add successfully!"
 
 
-# model_svr
+# img_to_base64 img转换
 def img_to_base64(img):
     output_buffer = BytesIO()
     plt.imsave(output_buffer, img, cmap='gray')
-    # img.save(output_buffer, format='JPEG')
     byte_data = output_buffer.getvalue()
     base64_data = base64.b64encode(byte_data)
     return "data:image/jpg;base64," + base64_data.decode('ascii')
 
 
-# model_svr
-@app.route('/api/ctupload', methods=['POST'])
+# ctUpload ct图像上传
+@app.route('/api/ctUpload', methods=['POST'])
 @login_required
 @cross_origin()
-def CTUpload():
+def ct_upload():
     response_object = {'status': 'success'}
     file = request.files['file']
     uploadname = secure_filename(file.filename)
@@ -154,27 +227,8 @@ def CTUpload():
     return jsonify(response_object)
 
 
-# model_svr
-@app.route('/api/getDetail', methods=['POST'])
-@login_required
-@cross_origin()
-def getDetail():
-    response_object = {'status': 'success'}
-    json = request.get_json()
-    id = json['id']
-    patient = _getPatient(id)
-    if patient:
-        response_object['patient'] = patient
-    else:
-        response_object['status'] = "fail"
-        return jsonify(response_object)
-    img_list = _get_img_list(id)
-    response_object['imgs'] = img_list
-    return jsonify(response_object)
-
-
-# model_svr
-def _getResults(id):
+# _get_results 获取result信息
+def _get_results(id):
     def to_dict(p):
         results = p.results.order_by(Result.time).all()[::-1]
         res = []
@@ -196,15 +250,15 @@ def _getResults(id):
         return None
 
 
-# model_svr
+# getResults 获取result
 @app.route('/api/getResults', methods=['POST'])
 @login_required
 @cross_origin()
-def getResults():
+def get_results():
     response_object = {'status': 'success'}
     json = request.get_json()
     id = json['id']
-    patient = _getResults(id)
+    patient = _get_results(id)
     if patient:
         response_object['results'] = patient
     else:
@@ -212,8 +266,8 @@ def getResults():
     return jsonify(response_object)
 
 
-# model_svr
-def _getInpOut(id):
+# _get_inp_out 获取图像结果信息
+def _get_inp_out(id):
     result = Result.query.filter_by(id=id).first()
     if not result:
         return None, None, None, None, None
@@ -225,32 +279,32 @@ def _getInpOut(id):
     return adc_file, dwi_file, res_file1, res_file2, info
 
 
-# model_svr
+# getInpOut 获取图像信息
 @app.route('/api/getInpOut', methods=['POST'])
 @login_required
 @cross_origin()
-def getInpOut():
+def get_inp_out():
     response_object = {'status': 'success'}
     json = request.get_json()
     id = json['id']
-    adc_file, dwi_file, res_file1, res_file2, info = _getInpOut(id)
+    adc_file, dwi_file, res_file1, res_file2, info = _get_inp_out(id)
     if adc_file or dwi_file or res_file1 or res_file2:
         if dwi_file:
             response_object['dwi_file'] = dwi_file
             dwi_file = os.path.join(app.config['UPLOAD_FOLDER'], dwi_file)
-            response_object['dwi_imgs'], response_object['dwi_slices'] = getAllSlice(dwi_file)
+            response_object['dwi_imgs'], response_object['dwi_slices'] = get_all_slice(dwi_file)
         if adc_file:
             response_object['adc_file'] = adc_file
             adc_file = os.path.join(app.config['UPLOAD_FOLDER'], adc_file)
-            response_object['adc_imgs'], response_object['adc_slices'] = getAllSlice(adc_file)
+            response_object['adc_imgs'], response_object['adc_slices'] = get_all_slice(adc_file)
         if res_file1:
             response_object['res_file1'] = res_file1
             res_file1 = os.path.join(app.config['RESULT_FOLDER'], res_file1)
-            response_object['res_imgs1'], response_object['res_slices1'] = getAllSlice(res_file1, thres=0.25)
+            response_object['res_imgs1'], response_object['res_slices1'] = get_all_slice(res_file1, thres=0.25)
         if res_file2:
             response_object['res_file2'] = res_file2
             res_file2 = os.path.join(app.config['RESULT_FOLDER'], res_file2)
-            response_object['res_imgs2'], response_object['res_slices2'] = getAllSlice(res_file2, thres=0.25)
+            response_object['res_imgs2'], response_object['res_slices2'] = get_all_slice(res_file2, thres=0.25)
         if info:
             info = round(info, 2)
             response_object['info'] = info
@@ -259,8 +313,8 @@ def getInpOut():
     return jsonify(response_object)
 
 
-# model_svr
-def getAllSlice(filename, thres=None):
+# get_all_slice 获取所有切片
+def get_all_slice(filename, thres=None):
     if not filename:
         return None, None
     imgs = nib.load(filename).get_fdata()
@@ -274,58 +328,27 @@ def getAllSlice(filename, thres=None):
     return res, str(imgs.shape[2])
 
 
-# model_svr
+# ctimg 获取ct结果 dwi或者adc
 @app.route('/api/ctimg', methods=['POST'])
 @login_required
 @cross_origin()
-def getImage():
+def get_image():
     response_object = {'status': 'success'}
     dwi_file = request.get_json()['dwi']
     adc_file = request.get_json()['adc']
 
     if dwi_file:
         dwi_file = os.path.join(app.config['UPLOAD_FOLDER'], dwi_file)
-        response_object['dwi_imgs'], response_object['dwi_slices'] = getAllSlice(dwi_file)
+        response_object['dwi_imgs'], response_object['dwi_slices'] = get_all_slice(dwi_file)
     if adc_file:
         adc_file = os.path.join(app.config['UPLOAD_FOLDER'], adc_file)
-        response_object['adc_imgs'], response_object['adc_slices'] = getAllSlice(adc_file)
+        response_object['adc_imgs'], response_object['adc_slices'] = get_all_slice(adc_file)
 
     return jsonify(response_object)
 
 
-# model_svr
-def _get_img_list(id):
-    res = []
-    img_list = Patient.query.filter_by(id=id).first().ctimgs.order_by("time").all()
-    for item in img_list:
-        res.append(
-            {
-                "uploadname": item.uploadname,
-                "time": time.strftime("%Y%m%d", time.localtime(int(item.time))),
-                "type": item.type,
-                "filename": item.filename,
-                "disabled": False
-            }
-        )
-    return res
-
-
-# model_svr
-@app.route('/api/imgList', methods=['POST'])
-@login_required
-@cross_origin()
-def getImgList():
-    response_object = {'status': 'success'}
-    patient = request.get_json()['patient']
-    if not patient:
-        return response_object
-    img_list = _get_img_list(patient)
-    response_object['imgs'] = img_list
-    return jsonify(response_object)
-
-
-# model_svr
-def _delImage(filename):
+# _del_image 删除ct图像
+def _del_image(filename):
     ctimg = CTImg.query.filter_by(filename=filename).first()
     if ctimg:
         db.session.delete(ctimg)
@@ -335,11 +358,11 @@ def _delImage(filename):
     return "not exist"
 
 
-# model_svr
+# del_image 删除ct图像
 @app.route('/api/delImage', methods=['POST'])
 @login_required
 @cross_origin()
-def delImage():
+def del_image():
     response_object = {
         'status': 'success',
         'dwi': 'fail',
@@ -348,19 +371,20 @@ def delImage():
     dwi_file = request.get_json()['dwi_file']
     adc_file = request.get_json()['adc_file']
     if dwi_file:
-        _delImage(dwi_file)
+        _del_image(dwi_file)
         response_object['dwi'] = 'success'
     if adc_file:
-        _delImage(adc_file)
+        _del_image(adc_file)
         response_object['adc'] = 'success'
     return jsonify(response_object)
 
 
-# model_svr
+# todo get_model select_model 这边需要更改 应该是根据ct去改或是选择模型而不是根据用户
+# get_model 获取当前model
 @app.route('/api/getModel', methods=['GET'])
 @login_required
 @cross_origin()
-def getModel():
+def get_model():
     response_object = {'status': 'success'}
     doctor = _get_current_user()
     if not doctor:
@@ -369,11 +393,11 @@ def getModel():
     return jsonify(response_object)
 
 
-# model_svr
+# select_model 选择模型
 @app.route('/api/selectModel', methods=['POST'])
 @login_required
 @cross_origin()
-def selectModel():
+def select_model():
     response_object = {'status': 'success'}
     model = request.get_json()['model']
     doctor = _get_current_user()
@@ -384,7 +408,7 @@ def selectModel():
     return jsonify(response_object)
 
 
-# model_svr
+# analyze 结果分析
 @app.route('/api/analyze', methods=['POST'])
 @login_required
 @cross_origin()
@@ -419,8 +443,6 @@ def analyze():
     else:
         perf_preds, nonperf_preds, info = stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr, adc_arr,
                                                    socketio)
-        # perf_preds, nonperf_preds, info = stage1_2(sess, X, perf_pred, perf_clf, nonperf_clf, dwi_arr, adc_arr,
-        #                                            socketio)
     perf_res = to_nii(perf_preds, affine)
     save_name1 = "perf_" + uuid.uuid4().hex + ".nii"
     save_path1 = os.path.join(app.config['RESULT_FOLDER'], save_name1)
@@ -446,7 +468,7 @@ def analyze():
     return jsonify(response_object)
 
 
-# model_svr
+# download_file1 下载目录一
 @app.route("/api/download1/<path:filename>", methods=['GET'])
 @login_required
 @cross_origin()
@@ -454,7 +476,7 @@ def download_file1(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 
-# model_svr
+# download_file2 下载目录二
 @app.route("/api/download2/<path:filename>", methods=['GET'])
 @login_required
 @cross_origin()
@@ -462,8 +484,8 @@ def download_file2(filename):
     return send_from_directory(app.config['RESULT_FOLDER'], filename)
 
 
-# model_svr
-def _delResult(id):
+# _del_result 删除处理结果
+def _del_result(id):
     res = Result.query.filter_by(id=id).first()
     if not res:
         return False
@@ -474,23 +496,23 @@ def _delResult(id):
     return True
 
 
-# model_svr
+# del_result  删除图像结果
 @app.route('/api/delResult', methods=['POST'])
 @login_required
 @cross_origin()
-def delResult():
+def del_result():
     response_object = {'status': 'success'}
     id = request.get_json()['resid']
-    if not _delResult(id):
+    if not _del_result(id):
         response_object['status'] = 'fail'
     return jsonify(response_object)
 
 
-# model_svr
+# ROI_upload 脑部梗死区上传
 @app.route('/api/ROI', methods=['POST'])
 @login_required
 @cross_origin()
-def ROIUpload():
+def ROI_upload():
     response_object = {'status': 'success'}
     file = request.files['file']
     uploadname = secure_filename(file.filename)
@@ -511,11 +533,11 @@ def ROIUpload():
     return jsonify(response_object)
 
 
-# model_svr
+# realimg_upload 真实图像上传
 @app.route('/api/realimg', methods=['POST'])
 @login_required
 @cross_origin()
-def realimgUpload():
+def realimg_upload():
     response_object = {'status': 'success'}
     file = request.files['file']
     uploadname = secure_filename(file.filename)
@@ -536,8 +558,8 @@ def realimgUpload():
     return jsonify(response_object)
 
 
-# model_svr
-def _getInpAndFix(id):
+# _get_inp_fix
+def _get_inp_fix(id):
     result = Result.query.filter_by(id=id).first()
     if not result:
         return None, None, None, None
@@ -548,24 +570,24 @@ def _getInpAndFix(id):
     return adc_file, dwi_file, realimg, roi
 
 
-# model_svr
-@app.route('/api/getInp', methods=['POST'])
+# getInpFix
+@app.route('/api/getInpFix', methods=['POST'])
 @login_required
 @cross_origin()
-def getInpAndFix():
+def get_inp_fix():
     response_object = {'status': 'success'}
     json = request.get_json()
     id = json['id']
-    adc_file, dwi_file, realimg, roi = _getInpAndFix(id)
+    adc_file, dwi_file, realimg, roi = _get_inp_fix(id)
     if adc_file or dwi_file or realimg or roi:
         if dwi_file:
             response_object['dwi_file'] = dwi_file
             dwi_file = os.path.join(app.config['UPLOAD_FOLDER'], dwi_file)
-            response_object['dwi_imgs'], response_object['dwi_slices'] = getAllSlice(dwi_file)
+            response_object['dwi_imgs'], response_object['dwi_slices'] = get_all_slice(dwi_file)
         if adc_file:
             response_object['adc_file'] = adc_file
             adc_file = os.path.join(app.config['UPLOAD_FOLDER'], adc_file)
-            response_object['adc_imgs'], response_object['adc_slices'] = getAllSlice(adc_file)
+            response_object['adc_imgs'], response_object['adc_slices'] = get_all_slice(adc_file)
         if realimg:
             response_object['realimg'] = realimg
         if roi:
@@ -576,8 +598,8 @@ def getInpAndFix():
     return jsonify(response_object)
 
 
-# model_svr
-def _getFixList():
+# _get_fix_list 获取结果信息列表
+def _get_fix_list():
     doctor = _get_current_user()
     if doctor.userType == 1:
         results = Result.query.all()
@@ -593,13 +615,13 @@ def _getFixList():
         return "not allowed"
 
 
-# model_svr
-@app.route('/api/getfixlist', methods=['GET'])
+# getFixList 后去结果信息列表
+@app.route('/api/getFixList', methods=['GET'])
 @login_required
 @cross_origin()
-def getFixList():
+def get_fix_list():
     response_object = {'status': 'success'}
-    res = _getFixList()
+    res = _get_fix_list()
     if res == "not allowed":
         response_object['status'] = "not allowed"
     elif res:
@@ -609,8 +631,8 @@ def getFixList():
     return jsonify(response_object)
 
 
-# model_svr
-def _delFix(id):
+# _del_fix 删除真实图像和roi信息
+def _del_fix(id):
     res = Result.query.filter_by(id=id).first()
     if not res:
         return False
@@ -622,19 +644,19 @@ def _delFix(id):
     return True
 
 
-# model_svr
+# delFix 删除真实图像和roi信息
 @app.route('/api/delFix', methods=['POST'])
 @login_required
 @cross_origin()
-def delFix():
+def del_fix():
     response_object = {'status': 'success'}
     id = request.get_json()['resid']
-    if not _delFix(id):
+    if not _del_fix(id):
         response_object['status'] = 'fail'
     return jsonify(response_object)
 
 
-# model_svr
+# _eval 评测
 def _eval(gt, pred, dwi):
     idx = np.where(dwi.flatten() > 1000)
     preds = pred.flatten()[idx]
@@ -647,7 +669,7 @@ def _eval(gt, pred, dwi):
     return accuracy, specifity, sensitivity, auc
 
 
-# model_svr
+# eval 发起评测获得结果
 @app.route('/api/eval', methods=['POST'])
 @login_required
 @cross_origin()
@@ -684,7 +706,6 @@ def eval():
 
 if __name__ == '__main__':
     def after_request(resp):
-        # resp.headers['Access-Control-Allow-Origin'] = '*'
         resp.headers['Access-Control-Allow-Credentials'] = 'true'
         return resp
 
