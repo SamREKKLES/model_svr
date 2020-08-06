@@ -1,22 +1,27 @@
 import base64
+
 import os
 import time
+from datetime import datetime
 from io import BytesIO
 
 import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
-from flask import Flask, jsonify, request, send_from_directory, render_template
+from flask import Flask, jsonify, request, send_from_directory, session
 from flask_cors import CORS, cross_origin
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import null
 from werkzeug.utils import secure_filename
-from flask_login import login_required, LoginManager, current_user, UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from flask_wtf import CSRFProtect
 from flask_socketio import SocketIO
 import uuid
 from sklearn import metrics
+
+from auths import login_required
+from common import SQLALCHEMY_DATABASE_URI
 from stage1_2 import stage1_init, stage2_init, stage2, load_imgs, stage1_2, to_nii
 
 # todo doctorID可以由前端给 patientId可以由前端或者直接自己查询manager 或 同局域网内关联数据库
@@ -30,14 +35,11 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULT_FOLDER'] = RESULT_FOLDER
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///model.db' + '?check_same_thread=False'  # todo 待修改
+app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 app.config['WTF_CSRF_ENABLED'] = False
 db = SQLAlchemy(app)
 app.secret_key = os.urandom(24)
-login_manager = LoginManager(app)
-login_manager.login_view = 'login'  # todo 绝对url 待修改成manager_svr的login服务
-login_manager.init_app(app=app)
 
 CSRFProtect(app)
 
@@ -49,20 +51,17 @@ socketio = SocketIO(app, cors_allowed_origins='*')
 class CTImg(db.Model):
     __tablename__ = 'ctimgs'
     id = db.Column(db.Integer, primary_key=True)
-    filename = db.Column(db.String(120), unique=True)
-    uploadname = db.Column(db.String(120), unique=False)
-    time = db.Column(db.String(10), unique=False)
-    type = db.Column(db.String(10), unique=False)
+    filename = db.Column(db.String(255), unique=True)
+    uploadname = db.Column(db.String(255), unique=False)
+    timestamp = db.Column(db.DateTime, default=datetime.now)
+    type = db.Column(db.String(255), unique=False)
     patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'))
     patient = db.relationship('Patient', backref=db.backref('ctimgs', lazy='dynamic'))
     doctor_id = db.Column(db.Integer, db.ForeignKey('users.id'))
     docter = db.relationship('User', backref=db.backref('ctimgs', lazy='dynamic'))
 
-    def __init__(self, filename, uploadname, img_type, patient, doctor, cttime=None):
+    def __init__(self, filename, uploadname, img_type, patient, doctor):
         self.filename = filename
-        if cttime is None:
-            cttime = time.time()
-        self.time = cttime
         self.type = img_type
         self.patient = patient
         self.uploadname = uploadname
@@ -75,26 +74,23 @@ class CTImg(db.Model):
 class Result(db.Model):
     __tablename__ = 'results'
     id = db.Column(db.Integer, primary_key=True)
-    filename1 = db.Column(db.String(120), unique=True)
-    filename2 = db.Column(db.String(120), unique=True)
-    time = db.Column(db.String(10), unique=False)
-    modelType = db.Column(db.Integer)
-    dwi_name = db.Column(db.String(120), unique=False)
-    adc_name = db.Column(db.String(120), unique=False)
-    info = db.Column(db.Float, unique=False)
+    filename1 = db.Column(db.String(255), unique=True)
+    filename2 = db.Column(db.String(255), unique=True)
+    timestamp = db.Column(db.DateTime, default=datetime.now)
+    modelType = db.Column(db.String(255), unique=True)
+    dwi_name = db.Column(db.String(255), unique=False)
+    adc_name = db.Column(db.String(255), unique=False)
+    info = db.Column(db.String(255), unique=False)
     patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'))
     patient = db.relationship('Patient', backref=db.backref('results', lazy='dynamic'))
     doctor_id = db.Column(db.Integer, db.ForeignKey('users.id'))
     docter = db.relationship('User', backref=db.backref('results', lazy='dynamic'))
-    realimg = db.Column(db.String(120), unique=True)
-    roi = db.Column(db.String(120), unique=True)
+    realimg = db.Column(db.String(255), unique=True)
+    roi = db.Column(db.String(255), unique=True)
 
-    def __init__(self, filename1, filename2, modelType, patient, doctor, dwi_name, adc_name, info, cttime=None):
+    def __init__(self, filename1, filename2, modelType, patient, doctor, dwi_name, adc_name, info):
         self.filename1 = filename1
         self.filename2 = filename2
-        if cttime is None:
-            cttime = time.time()
-        self.time = cttime
         self.modelType = modelType
         self.patient = patient
         self.docter = doctor
@@ -109,31 +105,34 @@ class Result(db.Model):
 class Patient(db.Model):
     __tablename__ = 'patients'
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80))
+    username = db.Column(db.String(255), unique=True)
     age = db.Column(db.Integer)
     sex = db.Column(db.Integer)
-    info = db.Column(db.String)
+    info = db.Column(db.String(255))
+    result = db.Column(db.String(255))
+    timestamp = db.Column(db.DateTime, default=datetime.now)
     doctor_id = db.Column(db.Integer, db.ForeignKey('users.id'))
     docter = db.relationship('User', backref=db.backref('patients', lazy='dynamic'))
 
-    def __init__(self, username, doctor, age, sex, info):
+    def __init__(self, username, doctor, age, sex, info, result):
         self.username = username
         self.docter = doctor
         self.age = age
         self.sex = sex
         self.info = info
+        self.result = result
 
     def __repr__(self):
         return '<Patient %r>' % self.username
 
 
 # User==Doctor
-class User(db.Model, UserMixin):
+class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(64), unique=True)
-    password = db.Column(db.String(200))
-    realname = db.Column(db.String(128), unique=False)
+    username = db.Column(db.String(255), unique=True)
+    password = db.Column(db.String(255))
+    realname = db.Column(db.String(255), unique=False)
     userType = db.Column(db.Integer)
 
     def __init__(self, username, password, realname, userType=1):
@@ -150,23 +149,11 @@ class User(db.Model, UserMixin):
         return {'id': self.id, 'username': self.username,
                 'realname': self.realname, 'usertype': self.userType}
 
-    @property
-    def is_authenticated(self):
-        return True
-
-    @property
-    def is_active(self):
-        return True
-
-    @property
-    def is_anonymous(self):
-        return False
-
     def get_id(self):
         return str(self.id)
 
     def __repr__(self):
-        return '<User %r>' % (self.username)
+        return '<User %r>' % self.username
 
 
 db.create_all()
@@ -174,23 +161,24 @@ db.create_all()
 FILE_LIST = []
 
 
-# load_user 加载当前登陆用户验证
-@login_manager.user_loader
-def load_user(userid):
-    return User.query.get(int(userid))
-
-
 def _get_current_user():
-    return load_user(current_user.id)
+    """
+    获取当前用户
+    :return:
+    """
+    currentName = session["user_name"]
+    if currentName:
+        return User.query.filter_by(username=currentName).first()
+    return null
 
 
 # add_item 增加ctimg信息
-def add_item(id, img_type, filename, uploadname, cttime=None):
+def add_item(id, img_type, filename, uploadname):
     patient = Patient.query.filter_by(id=id).first()
     doctor = _get_current_user()
     if patient is None:
         return False
-    ct = CTImg(filename, uploadname, img_type, patient, doctor, cttime)
+    ct = CTImg(filename, uploadname, img_type, patient, doctor)
     db.session.add(ct)
     db.session.commit()
     return "add successfully!"
@@ -215,12 +203,11 @@ def ct_upload():
     uploadname = secure_filename(file.filename)
     id = request.form['id']
     img_type = request.form['type']
-    cttime = request.form['date1'][:10]
     filename = img_type + "_" + uuid.uuid4().hex + ".nii.gz"
     save_path = app.config['UPLOAD_FOLDER']
     os.makedirs(save_path, exist_ok=True)
     save_file = os.path.join(save_path, filename)
-    if not add_item(id, img_type, filename, uploadname, cttime):
+    if not add_item(id, img_type, filename, uploadname):
         response_object['status'] = 'fail'
     else:
         file.save(save_file)
@@ -379,7 +366,7 @@ def del_image():
     return jsonify(response_object)
 
 
-# todo get_model select_model 这边需要更改 应该是根据ct去改或是选择模型而不是根据用户
+# todo get_model select_model 这边需要更改 应该是根据ct去改或是选择模型而不是根据用户 应该提供
 # get_model 获取当前model
 @app.route('/api/getModel', methods=['GET'])
 @login_required
@@ -713,4 +700,4 @@ if __name__ == '__main__':
     perf_model, nonperf_model = stage1_init()
     perf_clf, nonperf_clf = stage2_init()
     app.after_request(after_request)
-    socketio.run(app, host='0.0.0.0', port=5051)
+    socketio.run(app, host='127.0.0.1', port=5051)
