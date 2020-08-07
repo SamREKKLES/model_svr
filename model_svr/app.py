@@ -23,6 +23,7 @@ from sklearn import metrics
 from auths import login_required
 from common import SQLALCHEMY_DATABASE_URI, failReturn, successReturn
 from stage1_2 import stage1_init, stage2_init, stage2, load_imgs, stage1_2, to_nii
+from flasgger import Swagger
 
 # todo doctorID可以由前端给 patientId可以由前端或者直接自己查询manager 或 同局域网内关联数据库
 
@@ -40,6 +41,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 app.config['WTF_CSRF_ENABLED'] = False
 db = SQLAlchemy(app)
 app.secret_key = os.urandom(24)
+Swagger(app)
 
 CSRFProtect(app)
 
@@ -173,7 +175,7 @@ def _get_current_user():
 def add_item(id, img_type, filename, uploadname):
     """
     增加ctimg信息
-    :param id:
+    :param username:
     :param img_type:
     :param filename:
     :param uploadname:
@@ -209,6 +211,27 @@ def ct_upload():
     """
     ct图像上传
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: file
+        in: formData
+        type: file
+        required: true
+        description: The language name
+      - name: id
+        in: query
+        type: integer
+        description: username
+      - name: img_type
+        in: query
+        type: string
+    responses:
+      500:
+        description: ct图像上传失败
+      200:
+        description: ct图像上传成功
     """
     file = request.files['file']
     uploadname = secure_filename(file.filename)
@@ -259,6 +282,20 @@ def get_results():
     """
     获取result
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: id
+        in: query
+        type: integer
+        required: true
+        description: patientID
+    responses:
+      500:
+        description: 获取result失败
+      200:
+        description: 获取result成功
     """
     json = request.get_json()
     id = json['id']
@@ -286,7 +323,6 @@ def _get_inp_out(id):
     return adc_file, dwi_file, res_file1, res_file2, info
 
 
-# getInpOut
 @app.route('/api/getInpOut', methods=['POST'])
 @login_required
 @cross_origin()
@@ -294,6 +330,20 @@ def get_inp_out():
     """
     获取图像信息
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: id
+        in: query
+        type: integer
+        required: true
+        description: patientID
+    responses:
+      500:
+        description: 无数据信息
+      200:
+        description: 成功获取数据信息
     """
     response_object = {}
     json = request.get_json()
@@ -351,6 +401,23 @@ def get_image():
     """
     获取ct结果 dwi或者adc
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: dwi
+        in: query
+        type: string
+        description: dwi
+      - name: adc
+        in: query
+        type: string
+        description: adc
+    responses:
+      500:
+        description: 无数据信息
+      200:
+        description: ct结果
     """
     response_object = {}
     dwi_file = request.get_json()['dwi']
@@ -381,11 +448,31 @@ def _del_image(filename):
     return "not exist"
 
 
-# del_image 删除ct图像
 @app.route('/api/delImage', methods=['POST'])
 @login_required
 @cross_origin()
 def del_image():
+    """
+    删除ct图像
+    :return:
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: dwi_file
+        in: query
+        type: string
+        description: dwi_file
+      - name: adc_file
+        in: query
+        type: string
+        description: adc_file
+    responses:
+      500:
+        description: 删除失败
+      200:
+        description: 删除成功
+    """
     response_object = {
         'dwi': 'fail',
         'adc': 'fail',
@@ -438,6 +525,31 @@ def analyze():
     结果分析
      "Random Forest" if r.modelType == 0 else "Random Forest+U-Net"
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: backmodel
+        in: query
+        type: string
+        description: backmodel
+      - name: id
+        in: query
+        type: integer
+        description: patientID
+      - name: dwi
+        in: query
+        type: string
+        description: dwi
+      - name: adc
+        in: query
+        type: string
+        description: adc
+    responses:
+      500:
+        description: 分析失败
+      200:
+        description: 分析成功
     """
 
     def base64(imgs):
@@ -502,6 +614,19 @@ def download_file1(filename):
     下载目录一
     :param filename:
     :return:
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: filename
+        in: path
+        type: string
+        description: filename
+    responses:
+      500:
+        description: 下载失败
+      200:
+        description: 下载成功
     """
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
@@ -514,6 +639,19 @@ def download_file2(filename):
     下载目录二
     :param filename:
     :return:
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: filename
+        in: path
+        type: string
+        description: filename
+    responses:
+      500:
+        description: 下载失败
+      200:
+        description: 下载成功
     """
     return send_from_directory(app.config['RESULT_FOLDER'], filename)
 
@@ -541,9 +679,22 @@ def del_result():
     """
     删除图像结果
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: resultID
+        in: query
+        type: string
+        description: resultID
+    responses:
+      500:
+        description: 删除失败
+      200:
+        description: 删除成功
     """
-    id = request.get_json()['resid']
-    if not _del_result(id):
+    resultID = request.get_json()['resultID']
+    if not _del_result(resultID):
         return failReturn("", "删除失败")
     return successReturn("", "删除成功")
 
@@ -555,15 +706,32 @@ def ROI_upload():
     """
     脑部梗死区上传
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: file
+        in: formData
+        type: file
+        description: file
+      - name: resultID
+        in: query
+        type: integer
+        description: resultID
+    responses:
+      500:
+        description: 上传失败
+      200:
+        description: 上传成功
     """
     file = request.files['file']
     uploadname = secure_filename(file.filename)
-    id = request.form['id']
+    resultID = request.form['resultID']
     filename = uuid.uuid4().hex + '_' + uploadname
     save_path = app.config['UPLOAD_FOLDER']
     os.makedirs(save_path, exist_ok=True)
     save_file = os.path.join(save_path, filename)
-    r = Result.query.filter_by(id=id).first()
+    r = Result.query.filter_by(id=resultID).first()
     if not r:
         return failReturn("", "上传失败")
     else:
@@ -582,15 +750,32 @@ def realimg_upload():
     """
     真实图像上传
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: file
+        in: formData
+        type: file
+        description: file
+      - name: resultID
+        in: query
+        type: integer
+        description: resultID
+    responses:
+      500:
+        description: 上传失败
+      200:
+        description: 上传成功
     """
     file = request.files['file']
     uploadname = secure_filename(file.filename)
-    id = request.form['id']
+    resultID = request.form['resultID']
     filename = uuid.uuid4().hex + '_' + uploadname
     save_path = app.config['UPLOAD_FOLDER']
     os.makedirs(save_path, exist_ok=True)
     save_file = os.path.join(save_path, filename)
-    r = Result.query.filter_by(id=id).first()
+    r = Result.query.filter_by(id=resultID).first()
     if not r:
         return failReturn("", "上传失败")
     else:
@@ -620,11 +805,24 @@ def get_inp_fix():
     """
     获取并修正
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: resultID
+        in: query
+        type: integer
+        description: resultID
+    responses:
+      500:
+        description: 修正失败
+      200:
+        description: 修正成功
     """
     response_object = {}
     json = request.get_json()
-    id = json['id']
-    adc_file, dwi_file, realimg, roi = _get_inp_fix(id)
+    resultID = json['resultID']
+    adc_file, dwi_file, realimg, roi = _get_inp_fix(resultID)
     if adc_file or dwi_file or realimg or roi:
         if dwi_file:
             response_object['dwi_file'] = dwi_file
@@ -671,6 +869,14 @@ def get_fix_list():
     """
     获取结果信息列表
     :return: json
+    ---
+    tags:
+      - model_svr API
+    responses:
+      500:
+        description: 获取失败
+      200:
+        description: 获取成功
     """
     res = _get_fix_list()
     if res == "not allowed":
@@ -705,9 +911,22 @@ def del_fix():
     """
     删除真实图像和roi信息
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: resultID
+        in: query
+        type: integer
+        description: resultID
+    responses:
+      500:
+        description: 删除失败
+      200:
+        description: 删除成功
     """
-    id = request.get_json()['resid']
-    if not _del_fix(id):
+    resultID = request.get_json()['resultID']
+    if not _del_fix(resultID):
         return failReturn("", "删除失败")
     return successReturn("", "删除成功")
 
@@ -738,11 +957,28 @@ def eval():
     """
     发起评测获得结果
     :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: resultID
+        in: query
+        type: integer
+        description: resultID
+      - name: dataset
+        in: query
+        type: integer
+        description: 0为Perfussion数据模型，其他为Non-Perfussion数据模型
+    responses:
+      500:
+        description: 发起评测失败
+      200:
+        description: 发起评测成功
     """
     response_object = {}
-    id = request.get_json()['resid']
+    resultID = request.get_json()['resultID']
     dataset = request.get_json()['dataset']
-    res = Result.query.filter_by(id=id).first()
+    res = Result.query.filter_by(id=resultID).first()
     if not res:
         return failReturn("", "发起评测失败")
     roi = res.roi
