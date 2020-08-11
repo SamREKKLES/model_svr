@@ -21,5 +21,5 @@
 - Results表：存储图像分析结果
 - models表：存储模型信息
 
-**运行方法：python app.py 安装好所有环境后即可运行。
+#### 运行方法：python app.py 安装好所有环境后即可运行。
 
