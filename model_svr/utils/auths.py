@@ -29,7 +29,7 @@ def generate_access_token(user_id, algorithm: str = 'HS256', exp: float = 2):
     return access_token
 
 
-def generate_refresh_token(user_id, algorithm: str = 'HS256', fresh: float = 30):
+def generate_refresh_token(user_id, algorithm: str = 'HS256', fresh: float = 1):
     """
     生成refresh_token
 
@@ -39,7 +39,7 @@ def generate_refresh_token(user_id, algorithm: str = 'HS256', fresh: float = 30)
     :return:token
     """
     now = datetime.utcnow()
-    # 刷新时间为30天
+    # 刷新时间为1天
     exp_datetime = now + timedelta(days=fresh)
     refresh_payload = {
         'exp': exp_datetime,

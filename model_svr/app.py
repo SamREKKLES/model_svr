@@ -1,14 +1,20 @@
 import base64
-from utils import log, common
+
+from docx import Document
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.shared import Pt, RGBColor
+
+from utils import common
 
 import os
 from datetime import datetime
 from io import BytesIO
-
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
-from flask import Flask, request, send_from_directory, session
+from flask import Flask, request, send_from_directory, session, send_file, make_response
 from flask_cors import CORS, cross_origin
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import null
@@ -21,7 +27,7 @@ import uuid
 from sklearn import metrics
 
 from utils.auths import login_required
-from utils.common import SQLALCHEMY_DATABASE_URI, failReturn, successReturn
+from utils.common import SQLALCHEMY_DATABASE_URI, failReturn, successReturn, emailSent
 from stage1_2 import stage1_init, stage2_init, stage2, load_imgs, stage1_2, to_nii
 from flasgger import Swagger
 
@@ -30,10 +36,12 @@ app = Flask(__name__)
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(APP_ROOT, 'uploads')
 RESULT_FOLDER = os.path.join(APP_ROOT, 'results')
+DOC_FOLDER = os.path.join(APP_ROOT, 'doc')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULT_FOLDER'] = RESULT_FOLDER
+app.config['DOC_FOLDER'] = DOC_FOLDER
 app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 app.config['WTF_CSRF_ENABLED'] = False
@@ -52,8 +60,8 @@ CORS(app, supports_credentials=True, resources={r'/*': {'origins': '*'}})
 socketio = SocketIO(app, cors_allowed_origins='*')
 
 
-class CTImg(db.Model):
-    __tablename__ = 'ctimgs'
+class Img(db.Model):
+    __tablename__ = 'imgs'
     id = db.Column(db.Integer, primary_key=True)
     filename = db.Column(db.String(255), unique=True)
     uploadname = db.Column(db.String(255), unique=False)
@@ -113,12 +121,13 @@ class Patient(db.Model):
     record_id = db.Column(db.String(255))
     info = db.Column(db.String(255))
     result = db.Column(db.String(255))
+    cva = db.Column(db.String(255))
     state = db.Column(db.String(255))
     create_time = db.Column(db.DateTime)
     update_time = db.Column(db.DateTime, default=datetime.now())
     doctor_id = db.Column(db.Integer)
 
-    def __init__(self, username, recordID, state, doctor, age, sex, info, result):
+    def __init__(self, username, recordID, state, doctor, age, sex, info, result, cva):
         self.username = username
         self.doctor_id = doctor
         self.record_id = recordID
@@ -127,6 +136,7 @@ class Patient(db.Model):
         self.sex = sex
         self.info = info
         self.result = result
+        self.cva = cva
         self.create_time = datetime.now()
 
     def __repr__(self):
@@ -178,7 +188,7 @@ def _get_current_user():
 
 def add_item(id, img_type, filename, uploadname):
     """
-    增加ctimg信息
+    增加img信息
     :param id:
     :param img_type:
     :param filename:
@@ -186,10 +196,10 @@ def add_item(id, img_type, filename, uploadname):
     :return: boolean
     """
     patient = Patient.query.filter_by(id=id).first()
-    doctor = _get_current_user()
+    doctorID = session["user_id"]
     if patient is None:
         return False
-    ct = CTImg(filename, uploadname, img_type, patient.id, doctor.id)
+    ct = Img(filename, uploadname, img_type, patient.id, doctorID)
     db.session.add(ct)
     db.session.commit()
     return True
@@ -208,12 +218,12 @@ def img_to_base64(img):
     return "data:image/jpg;base64," + base64_data.decode('ascii')
 
 
-@app.route('/api/ctUpload', methods=['POST'])
+@app.route('/api/imgUpload', methods=['POST'])
 @login_required
 @cross_origin()
-def ct_upload():
+def img_upload():
     """
-    ct图像上传
+    img图像上传
     :return: json
     ---
     tags:
@@ -232,6 +242,7 @@ def ct_upload():
         in: formData
         type: string
         required: true
+        description: ADC或DWI
       - name: Authorization
         in: header
         type: string
@@ -253,12 +264,12 @@ def ct_upload():
         os.makedirs(save_path, exist_ok=True)
         save_file = os.path.join(save_path, filename)
         if not add_item(id, img_type, filename, uploadname):
-            return failReturn("", "ctUpload: ct图像上传失败,无该用户")
+            return failReturn("", "imgUpload: 图像上传失败,无该用户")
         else:
             file.save(save_file)
-        return successReturn("", "ctUpload: ct图像上传成功")
+        return successReturn("", "imgUpload: 图像上传成功")
     except Exception as e:
-        return failReturn(format(e), "ctUpload出错")
+        return failReturn(format(e), "imgUpload出错")
 
 
 def _get_results(id):
@@ -284,12 +295,12 @@ def _get_results(id):
         return None
 
 
-@app.route('/api/getResults', methods=['POST'])
+@app.route('/api/getResultsByPatient', methods=['POST'])
 @login_required
 @cross_origin()
-def get_results():
+def get_results_by_patient():
     """
-    获取result
+    根据病人id获取result
     :return: json
     ---
     tags:
@@ -431,7 +442,7 @@ def get_all_slice(filename, thres=None):
     return res, str(imgs.shape[2])
 
 
-@app.route('/api/ctimg', methods=['POST'])
+@app.route('/api/img', methods=['POST'])
 @login_required
 @cross_origin()
 def get_image():
@@ -471,16 +482,16 @@ def get_image():
         adc_file = request.get_json()['adc']
 
         if dwi_file == "" and adc_file == "":
-            return failReturn("", "ctimg: 参数为空")
+            return failReturn("", "img: 参数为空")
         if dwi_file:
             dwi_file = os.path.join(app.config['UPLOAD_FOLDER'], dwi_file)
             response_object['dwi_imgs'], response_object['dwi_slices'] = get_all_slice(dwi_file)
         if adc_file:
             adc_file = os.path.join(app.config['UPLOAD_FOLDER'], adc_file)
             response_object['adc_imgs'], response_object['adc_slices'] = get_all_slice(adc_file)
-        return successReturn(response_object, "ctimg: 获取成功")
+        return successReturn(response_object, "img: 获取成功")
     except Exception as e:
-        return failReturn(format(e), "ctimg出错")
+        return failReturn(format(e), "img出错")
 
 
 def _del_image(filename):
@@ -489,9 +500,9 @@ def _del_image(filename):
     :param filename:
     :return: string
     """
-    ctimg = CTImg.query.filter_by(filename=filename).first()
-    if ctimg:
-        db.session.delete(ctimg)
+    img = Img.query.filter_by(filename=filename).first()
+    if img:
+        db.session.delete(img)
         db.session.commit()
         os.remove(filename)
         return "delete success"
@@ -628,7 +639,8 @@ def analyze():
             perf_preds, nonperf_preds, info = stage2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr, adc_arr,
                                                      socketio)
         else:
-            perf_preds, nonperf_preds, info = stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr, adc_arr,
+            perf_preds, nonperf_preds, info = stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr,
+                                                       adc_arr,
                                                        socketio)
         perf_res = to_nii(perf_preds, affine)
         save_name1 = "perf_" + uuid.uuid4().hex + ".nii"
@@ -638,7 +650,7 @@ def analyze():
         save_name2 = "nonperf_" + uuid.uuid4().hex + ".nii"
         save_path2 = os.path.join(app.config['RESULT_FOLDER'], save_name2)
         nonperf_res.to_filename(save_path2)
-        doctor = _get_current_user()
+        doctor = session["user_id"]
         res_to_db = Result(save_name1, save_name2, modelType, id, doctor.id, dwi_name, adc_name, info)
         db.session.add(res_to_db)
         db.session.commit()
@@ -656,7 +668,7 @@ def analyze():
         return failReturn(format(e), "analyze出错")
 
 
-@app.route("/api/download1/<path:filename>", methods=['GET'])
+@app.route("/api/download/file1/<path:filename>", methods=['GET'])
 @login_required
 @cross_origin()
 def download_file1(filename):
@@ -689,7 +701,7 @@ def download_file1(filename):
         return failReturn(format(e), "download1出错")
 
 
-@app.route("/api/download2/<path:filename>", methods=['GET'])
+@app.route("/api/download/file2/<path:filename>", methods=['GET'])
 @login_required
 @cross_origin()
 def download_file2(filename):
@@ -894,12 +906,10 @@ def realimg_upload():
 def _get_inp_fix(id):
     result = Result.query.filter_by(id=id).first()
     if not result:
-        return None, None, None, None
-    adc_file = result.adc_name
-    dwi_file = result.dwi_name
+        return None, None
     realimg = result.realimg
     roi = result.roi
-    return adc_file, dwi_file, realimg, roi
+    return realimg, roi
 
 
 @app.route('/api/getInpFix', methods=['POST'])
@@ -907,7 +917,7 @@ def _get_inp_fix(id):
 @cross_origin()
 def get_inp_fix():
     """
-    获取并修正
+    获取roi和realImg
     :return: json
     ---
     tags:
@@ -939,23 +949,15 @@ def get_inp_fix():
         response_object = {}
         json = request.get_json()
         resultID = json['resultID']
-        adc_file, dwi_file, realimg, roi = _get_inp_fix(resultID)
-        if adc_file or dwi_file or realimg or roi:
-            if dwi_file:
-                response_object['dwi_file'] = dwi_file
-                dwi_file = os.path.join(app.config['UPLOAD_FOLDER'], dwi_file)
-                response_object['dwi_imgs'], response_object['dwi_slices'] = get_all_slice(dwi_file)
-            if adc_file:
-                response_object['adc_file'] = adc_file
-                adc_file = os.path.join(app.config['UPLOAD_FOLDER'], adc_file)
-                response_object['adc_imgs'], response_object['adc_slices'] = get_all_slice(adc_file)
+        realimg, roi = _get_inp_fix(resultID)
+        if realimg or roi:
             if realimg:
                 response_object['realimg'] = realimg
             if roi:
                 response_object['roi'] = roi
         else:
-            return failReturn("", "getInpFix: 修正失败")
-        return successReturn(response_object, "getInpFix: 修正成功")
+            return failReturn("", "getInpFix: 获取失败")
+        return successReturn(response_object, "getInpFix: 获取成功")
     except Exception as e:
         return failReturn(format(e), "getInpFix出错")
 
@@ -983,10 +985,10 @@ def _get_fix_list():
         return "not allowed"
 
 
-@app.route('/api/getFixList', methods=['GET'])
+@app.route('/api/getResultList', methods=['GET'])
 @login_required
 @cross_origin()
-def get_fix_list():
+def get_result_list():
     """
     获取结果信息列表
     :return: json
@@ -1176,6 +1178,128 @@ def eval():
         return successReturn(response_object, "eval: 发起评测成功")
     except Exception as e:
         return failReturn(format(e), "eval出错")
+
+
+def _get_report(doctor, patient, result):
+    document = Document()
+    title1 = document.add_heading('浙江大学第一附属医院', 0)
+    title1.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    title2 = document.add_heading('脑卒中诊疗辅助报告', 0)
+    title2.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    d = document.add_paragraph()
+    run1 = d.add_run('责任医生：')
+    run1.font.size = Pt(23)
+    run2 = d.add_run(doctor.username)
+    run2.font.size = Pt(23)
+    run2.font.color.rgb = RGBColor(178, 34, 34)
+    document.add_paragraph().add_run('报告生成时间：' + str(datetime.now().strftime('%y-%m-%d %H:%M:%S'))).font.size = Pt(18)
+    document.add_heading('病人基本信息', level=1)
+    if patient.sex == 1:
+        sex = "男"
+    else:
+        sex = "女"
+    document.add_paragraph("病人：" + patient.username + "，年龄：" + str(patient.age) + "，性别：" + sex + "，病例本编号："+ str(patient.record_id) + "。", style='List Bullet')
+    document.add_paragraph("病人病情：" + str(patient.info) + "。", style='List Bullet')
+    document.add_paragraph("诊疗结果：" + str(patient.result) + "。", style='List Bullet')
+    document.add_paragraph("脑卒中类别判断："+ str(patient.cva) + "。当前状态：" + str(patient.state) + "。", style='List Bullet')
+    document.add_paragraph("初次看病时间：" + str(patient.create_time) + "。最近一次看病时间：" + str(patient.update_time) + "。", style='List Bullet')
+    _img_process(result.adc_name)
+    _img_process(result.dwi_name)
+    _img_process(result.filename1)
+    _img_process(result.filename2)
+    document.add_page_break()
+    document.add_paragraph("ADC图像", style='List Bullet')
+    document.add_picture(os.path.join(app.config['DOC_FOLDER'], 'pic', 'adc.png'))
+    document.add_page_break()
+    document.add_paragraph("DWI图像", style='List Bullet')
+    document.add_picture(os.path.join(app.config['DOC_FOLDER'], 'pic', 'dwi.png'))
+    document.add_page_break()
+    document.add_paragraph("perf图像", style='List Bullet')
+    document.add_picture(os.path.join(app.config['DOC_FOLDER'], 'pic', 'perf.png'))
+    document.add_page_break()
+    document.add_paragraph("nonperf图像", style='List Bullet')
+    document.add_picture(os.path.join(app.config['DOC_FOLDER'], 'pic', 'nonperf.png'))
+    filename = str(uuid.uuid4()) + '_res.docx'
+    document.save(os.path.join(app.config['DOC_FOLDER'], filename))
+    return filename
+
+
+def _img_process(imgName):
+    name = imgName.split("_")
+    if name[0].lower() == "adc" or name[0].lower() == "dwi":
+        path = os.path.join(app.config['UPLOAD_FOLDER'], imgName)
+        file = nib.load(path)
+        img_arr = file.dataobj[:, :, 10]
+        plt.imshow(img_arr, cmap='gray')
+        if name[0].lower() == "adc":
+            adc_path = os.path.join(app.config['DOC_FOLDER'], 'pic', 'adc.png')
+            plt.savefig(adc_path)
+            plt.close(adc_path)
+        elif name[0].lower() == "dwi":
+            dwi_path = os.path.join(app.config['DOC_FOLDER'], 'pic', 'dwi.png')
+            plt.savefig(dwi_path)
+            plt.close(dwi_path)
+    elif name[0].lower() == "perf" or name[0].lower() == "nonperf":
+        path = os.path.join(app.config['RESULT_FOLDER'], imgName)
+        file = nib.load(path)
+        img_arr = file.dataobj[:, :, 10]
+        plt.imshow(img_arr, cmap='gray')
+        if name[0].lower() == "perf":
+            perf_path = os.path.join(app.config['DOC_FOLDER'], 'pic', 'perf.png')
+            plt.savefig(perf_path)
+            plt.close(perf_path)
+        elif name[0].lower() == "nonperf":
+            nonperf_path = os.path.join(app.config['DOC_FOLDER'], 'pic', 'nonperf.png')
+            plt.savefig(nonperf_path)
+            plt.close(nonperf_path)
+
+
+@app.route('/api/getReport', methods=['POST'])
+@login_required
+@cross_origin()
+def get_report():
+    """
+    获取analyze报告
+    :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          id: 获取analyze报告
+          required:
+            - resultID
+          properties:
+            resultID:
+              type: integer
+              description: resultID
+      - name: Authorization
+        in: header
+        type: string
+        required: true
+        description: token
+    responses:
+      fail:
+        description: 获取analyze报告失败
+      success:
+        description: 获取analyze报告成功
+    """
+    try:
+        resultID = request.get_json()['resultID']
+        result = Result.query.filter_by(id=resultID).first()
+        user = _get_current_user()
+        if user.userType != 1 and user.id != result.doctor_id:
+            return failReturn("", "getReport: 权限不足无法查看")
+        patient = Patient.query.filter_by(id=result.patient_id).first()
+        doctor = User.query.filter_by(id=result.doctor_id).first()
+        filename = _get_report(doctor, patient, result)
+        response = make_response(send_from_directory(app.config['DOC_FOLDER'], filename, as_attachment=True))
+        return response
+    except Exception as e:
+        return failReturn(format(e), "getReport出错")
 
 
 if __name__ == '__main__':
