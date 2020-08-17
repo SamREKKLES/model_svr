@@ -31,7 +31,6 @@ from utils.common import SQLALCHEMY_DATABASE_URI, failReturn, successReturn, ema
 from stage1_2 import stage1_init, stage2_init, stage2, load_imgs, stage1_2, to_nii
 from flasgger import Swagger
 
-
 app = Flask(__name__)
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(APP_ROOT, 'uploads')
@@ -581,7 +580,7 @@ def analyze():
         schema:
           id: 结果分析
           required:
-            - id
+            - patientID
             - backmodel
             - dwi_file
             - adc_file
@@ -651,7 +650,7 @@ def analyze():
         save_path2 = os.path.join(app.config['RESULT_FOLDER'], save_name2)
         nonperf_res.to_filename(save_path2)
         doctor = session["user_id"]
-        res_to_db = Result(save_name1, save_name2, modelType, id, doctor.id, dwi_name, adc_name, info)
+        res_to_db = Result(save_name1, save_name2, modelType, id, doctor, dwi_name, adc_name, info)
         db.session.add(res_to_db)
         db.session.commit()
         perf_preds[perf_preds >= 0.2] = 1
@@ -668,7 +667,7 @@ def analyze():
         return failReturn(format(e), "analyze出错")
 
 
-@app.route("/api/download/file1/<path:filename>", methods=['GET'])
+@app.route("/api/download/uploadFile/<path:filename>", methods=['GET'])
 @login_required
 @cross_origin()
 def download_file1(filename):
@@ -701,7 +700,7 @@ def download_file1(filename):
         return failReturn(format(e), "download1出错")
 
 
-@app.route("/api/download/file2/<path:filename>", methods=['GET'])
+@app.route("/api/download/resultFile/<path:filename>", methods=['GET'])
 @login_required
 @cross_origin()
 def download_file2(filename):
@@ -1198,11 +1197,14 @@ def _get_report(doctor, patient, result):
         sex = "男"
     else:
         sex = "女"
-    document.add_paragraph("病人：" + patient.username + "，年龄：" + str(patient.age) + "，性别：" + sex + "，病例本编号："+ str(patient.record_id) + "。", style='List Bullet')
+    document.add_paragraph(
+        "病人：" + patient.username + "，年龄：" + str(patient.age) + "，性别：" + sex + "，病例本编号：" + str(patient.record_id) + "。",
+        style='List Bullet')
     document.add_paragraph("病人病情：" + str(patient.info) + "。", style='List Bullet')
     document.add_paragraph("诊疗结果：" + str(patient.result) + "。", style='List Bullet')
-    document.add_paragraph("脑卒中类别判断："+ str(patient.cva) + "。当前状态：" + str(patient.state) + "。", style='List Bullet')
-    document.add_paragraph("初次看病时间：" + str(patient.create_time) + "。最近一次看病时间：" + str(patient.update_time) + "。", style='List Bullet')
+    document.add_paragraph("脑卒中类别判断：" + str(patient.cva) + "。当前状态：" + str(patient.state) + "。", style='List Bullet')
+    document.add_paragraph("初次看病时间：" + str(patient.create_time) + "。最近一次看病时间：" + str(patient.update_time) + "。",
+                           style='List Bullet')
     _img_process(result.adc_name)
     _img_process(result.dwi_name)
     _img_process(result.filename1)
