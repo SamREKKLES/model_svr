@@ -10,6 +10,9 @@ import os
 from datetime import datetime
 from io import BytesIO
 import matplotlib
+
+from utils.log import logInfo
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import nibabel as nib
@@ -123,7 +126,7 @@ class Patient(db.Model):
     cva = db.Column(db.String(255))
     state = db.Column(db.String(255))
     create_time = db.Column(db.DateTime)
-    update_time = db.Column(db.DateTime, default=datetime.now())
+    update_time = db.Column(db.DateTime)
     doctor_id = db.Column(db.Integer)
 
     def __init__(self, username, recordID, state, doctor, age, sex, info, result, cva):
@@ -137,6 +140,7 @@ class Patient(db.Model):
         self.result = result
         self.cva = cva
         self.create_time = datetime.now()
+        self.update_time = self.create_time
 
     def __repr__(self):
         return '<Patient %r>' % self.username
@@ -334,7 +338,7 @@ def get_results_by_patient():
         if patient:
             return successReturn({"results": patient}, "getResults: 获取result成功")
         else:
-            return failReturn("", "getResults: 权限不足获取result失败")
+            return failReturn("", "getResults: 权限不足或无该result，获取result失败")
     except Exception as e:
         return failReturn(format(e), "getResults出错")
 
@@ -650,7 +654,7 @@ def analyze():
         save_path2 = os.path.join(app.config['RESULT_FOLDER'], save_name2)
         nonperf_res.to_filename(save_path2)
         doctor = session["user_id"]
-        res_to_db = Result(save_name1, save_name2, modelType, id, doctor, dwi_name, adc_name, info)
+        res_to_db = Result(save_name1, save_name2, modelType, id, doctor, dwi_name, adc_name, float(info))
         db.session.add(res_to_db)
         db.session.commit()
         perf_preds[perf_preds >= 0.2] = 1

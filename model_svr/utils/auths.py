@@ -104,9 +104,11 @@ def login_required(f):
     def wrapper(*args, **kwargs):
         token = request.headers.get("Authorization", default=None)
         if not token:
+            log.logError("login_required: 未登录请先登陆")
             return failReturn("", "未登录请先登陆")
         user_id = identify(token)
         if not user_id:
+            log.logError("login_required: 未登录请先登陆")
             return failReturn("", "未登录请先登陆")
         # 获取到用户并写入到session中,方便后续使用
         session["user_id"] = user_id
