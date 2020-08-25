@@ -1,5 +1,9 @@
 import logging
+import os
 from logging import handlers
+
+log_error = os.path.join(os.getcwd(), "log", "error_log")
+log_info = os.path.join(os.getcwd(), "log", "all_log")
 
 
 def logError(message):
@@ -10,13 +14,13 @@ def logError(message):
         logger.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(pathname)s[line:%(lineno)d] - %(levelname)s: %(message)s')
         sh = logging.StreamHandler()
-        th = handlers.TimedRotatingFileHandler(filename='log\\error_log', when="D", interval=1, backupCount=7, encoding='utf-8')
+        th = handlers.TimedRotatingFileHandler(filename=log_error, when="D", interval=1, backupCount=7, encoding='utf-8')
         sh.setFormatter(formatter)
         th.setFormatter(formatter)
         logger.addHandler(sh)
         logger.addHandler(th)
 
-    logger.error(message)
+    logger.exception(message)
 
 
 def logInfo(message):
@@ -27,7 +31,7 @@ def logInfo(message):
         logger.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(pathname)s[line:%(lineno)d] - %(levelname)s: %(message)s')
         sh = logging.StreamHandler()
-        th = handlers.TimedRotatingFileHandler(filename='log\\all_log', when="D", interval=1, backupCount=7, encoding='utf-8')
+        th = handlers.TimedRotatingFileHandler(filename=log_info, when="D", interval=1, backupCount=7, encoding='utf-8')
         sh.setFormatter(formatter)
         th.setFormatter(formatter)
         logger.addHandler(sh)

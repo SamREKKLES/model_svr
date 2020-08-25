@@ -70,11 +70,13 @@ def _stage1(perf_model, nonperf_model, dwi_arr, adc_arr, socketio):
             perf_out[perf_out >= 0.5] = 1.0
             perf_out[perf_out < 0.5] = 0
             perf_out = perf_out.cpu().numpy()[0,0]
+            perf_out = perf_out.astype(np.float32)
             perf_preds.append(sktrans.resize(perf_out, (w,h)))
 
             nonperf_out[nonperf_out >= 0.5] = 1.0
             nonperf_out[nonperf_out < 0.5] = 0
             nonperf_out = nonperf_out.cpu().numpy()[0,0]
+            nonperf_out = nonperf_out.astype(np.float32)
             nonperf_preds.append(sktrans.resize(nonperf_out, (w,h)))
     return np.stack(perf_preds, axis=2), np.stack(nonperf_preds, axis=2)
 

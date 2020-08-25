@@ -11,8 +11,6 @@ from datetime import datetime
 from io import BytesIO
 import matplotlib
 
-from utils.log import logInfo
-
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import nibabel as nib
@@ -270,9 +268,82 @@ def img_upload():
             return failReturn("", "imgUpload: 图像上传失败,无该用户")
         else:
             file.save(save_file)
-        return successReturn("", "imgUpload: 图像上传成功")
+        return successReturn({"filename": filename}, "imgUpload: 图像上传成功")
     except Exception as e:
         return failReturn(format(e), "imgUpload出错")
+
+
+def _get_filename(id):
+    """
+    获取img信息
+    :param id:
+    :return: img
+    """
+
+    def to_dict(id):
+        imgs = Img.query.filter_by(patient_id=id).order_by(Img.timestamp).all()[::-1]
+        res = []
+        for r in imgs:
+            res.append({'id': r.id, 'time': r.timestamp, 'filename': r.filename,
+                        'uploadName': r.uploadname, 'type': r.type})
+        return res
+
+    patient = Patient.query.filter_by(id=id).first()
+    doctor = _get_current_user()
+    if doctor.userType == 1 or patient.docter_id == doctor.id:
+        return to_dict(id)
+    else:
+        return None
+
+
+@app.route('/api/getFilename', methods=['POST'])
+@login_required
+@cross_origin()
+def get_filename():
+    """
+    根据病人id获取img信息
+    :return: json
+    ---
+    tags:
+      - model_svr API
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          id: 获取img
+          required:
+            - patientID
+          properties:
+            patientID:
+              type: integer
+              description: patientID
+      - name: Authorization
+        in: header
+        type: string
+        required: true
+        description: token
+    responses:
+      fail:
+        description: 获取result失败
+      success:
+        schema:
+          id: filename
+          properties:
+            filename:
+              type: string
+        description: 获取result失败
+    """
+    try:
+        json = request.get_json()
+        id = json['patientID']
+        imgs = _get_filename(id)
+        if imgs:
+            return successReturn({"imgs": imgs}, "getResults: 获取result成功")
+        else:
+            return failReturn("", "getResults: 权限不足或无该result，获取filename失败")
+    except Exception as e:
+        return failReturn(format(e), "getfilename出错")
 
 
 def _get_results(id):
