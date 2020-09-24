@@ -3,6 +3,8 @@ import base64
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.shared import Pt, RGBColor
+from nibabel.viewers import OrthoSlicer3D
+from scipy import misc
 
 from utils import common
 
@@ -15,7 +17,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
-from flask import Flask, request, send_from_directory, session, send_file, make_response
+from flask import Flask, request, send_from_directory, session, send_file, make_response, Response
 from flask_cors import CORS, cross_origin
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import null
@@ -37,11 +39,13 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(APP_ROOT, 'uploads')
 RESULT_FOLDER = os.path.join(APP_ROOT, 'results')
 DOC_FOLDER = os.path.join(APP_ROOT, 'doc')
+GET_PIC = os.path.join(APP_ROOT, 'pic')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULT_FOLDER'] = RESULT_FOLDER
 app.config['DOC_FOLDER'] = DOC_FOLDER
+app.config['GET_PIC'] = GET_PIC
 app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 app.config['WTF_CSRF_ENABLED'] = False
@@ -250,10 +254,25 @@ def img_upload():
         required: true
         description: token
     responses:
-      fail:
-        description: ct图像上传失败
       success:
-        description: ct图像上传成功
+        schema:
+          type: file
+          example: file
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: imgUpload出错 or 图像上传失败,无该用户
+            data:
+              type: string
+              example: error
+        description: 失败
     """
     try:
         file = request.files['file']
@@ -268,7 +287,8 @@ def img_upload():
             return failReturn("", "imgUpload: 图像上传失败,无该用户")
         else:
             file.save(save_file)
-        return successReturn({"filename": filename}, "imgUpload: 图像上传成功")
+        resp = make_response(send_file(save_file, mimetype="image/jpeg"))
+        return resp
     except Exception as e:
         return failReturn(format(e), "imgUpload出错")
 
@@ -324,15 +344,54 @@ def get_filename():
         required: true
         description: token
     responses:
-      fail:
-        description: 获取result失败
       success:
         schema:
-          id: filename
+          type: object
           properties:
-            filename:
+            status:
               type: string
-        description: 获取result失败
+              example: success.
+            msg:
+              type: string
+              example: 获取result成功
+            data:
+              type: object
+              properties:
+                  imgs:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            id:
+                                type: string
+                                example: 1
+                            time:
+                                type: string
+                                example: date-time
+                            filename:
+                                type: string
+                                example: filename
+                            uploadName:
+                                type: string
+                                example: uploadName
+                            type:
+                                type: string
+                                example: type
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: getfilename出错 or 权限不足或无该result，获取filename失败
+            data:
+              type: string
+              example: error
+        description: 失败
     """
     try:
         json = request.get_json()
@@ -353,18 +412,18 @@ def _get_results(id):
     :return: result
     """
 
-    def to_dict(p):
+    def to_dicts(p):
         results = Result.query.filter_by(patient_id=p.id).order_by(Result.timestamp).all()[::-1]
         res = []
         for r in results:
-            res.append({'id': r.id, 'time': r.timestamp, 'name1': r.filename1,
-                        'name2': r.filename2, 'modelType': r.modeltype, "patientName": p.username})
+            res.append({'id': r.id, 'time': r.timestamp, 'name1': r.filename1, 'name2': r.filename2,
+                        'modelType': r.modeltype, "patientName": p.username, "info": r.info})
         return res
 
     patient = Patient.query.filter_by(id=id).first()
     doctor = _get_current_user()
     if doctor.userType == 1 or patient.docter_id == doctor.id:
-        return to_dict(patient)
+        return to_dicts(patient)
     else:
         return None
 
@@ -397,17 +456,68 @@ def get_results_by_patient():
         required: true
         description: token
     responses:
-      fail:
-        description: 获取result失败
       success:
-        description: 获取result成功
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 获取result成功
+            data:
+              type: object
+              properties:
+                  results:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            id:
+                                type: string
+                                example: 1
+                            time:
+                                type: string
+                                format: date-time
+                            name1:
+                                type: string
+                                example: filename1
+                            name2:
+                                type: string
+                                example: filename2
+                            modelType:
+                                type: string
+                                example: modelType
+                            patientName:
+                                type: string
+                                example: patientName
+                            info:
+                                type: number
+                                format: float
+                                example: 120.0
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: getResults出错 or 权限不足或无该result，获取result失败
+            data:
+              type: string
+              example: error
+        description: 失败
     """
     try:
         json = request.get_json()
         id = json['patientID']
-        patient = _get_results(id)
-        if patient:
-            return successReturn({"results": patient}, "getResults: 获取result成功")
+        results = _get_results(id)
+        if results:
+            return successReturn({"results": results}, "getResults: 获取result成功")
         else:
             return failReturn("", "getResults: 权限不足或无该result，获取result失败")
     except Exception as e:
@@ -459,10 +569,74 @@ def get_inp_out():
         required: true
         description: token
     responses:
-      fail:
-        description: 无数据信息
       success:
-        description: 成功获取数据信息
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 成功获取数据信息
+            data:
+              type: object
+              properties:
+                dwi_file:
+                    type: string
+                    example: filename
+                dwi_imgs:
+                    type: string
+                    example: base64
+                dwi_slices:
+                    type: string
+                    example: 21
+                adc_file:
+                    type: string
+                    example: filename
+                adc_imgs:
+                    type: string
+                    example: base64
+                adc_slices:
+                    type: string
+                    example: 21
+                res_file1:
+                    type: string
+                    example: filename
+                res_imgs1:
+                    type: string
+                    example: base64
+                res_slices1:
+                    type: string
+                    example: 21
+                res_file2:
+                    type: string
+                    example: filename
+                res_imgs2:
+                    type: string
+                    example: base64
+                res_slices2:
+                    type: string
+                    example: 21
+                info:
+                    type: number
+                    format: float
+                    example: 120.0
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: 无数据信息 or getInpOut出错
+            data:
+              type: string
+              example: error
+        description: 失败
     """
     try:
         response_object = {}
@@ -545,10 +719,46 @@ def get_image():
         required: true
         description: token
     responses:
-      fail:
-        description: 无数据信息
       success:
-        description: ct结果
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 获取成功
+            data:
+              type: object
+              properties:
+                dwi_imgs:
+                    type: string
+                    example: base64
+                dwi_slices:
+                    type: string
+                    example: 21
+                adc_imgs:
+                    type: string
+                    example: base64
+                adc_slices:
+                    type: string
+                    example: 21
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: img出错 or 参数为空
+            data:
+              type: string
+              example: error
+        description: 失败
     """
     try:
         response_object = {}
@@ -566,75 +776,6 @@ def get_image():
         return successReturn(response_object, "img: 获取成功")
     except Exception as e:
         return failReturn(format(e), "img出错")
-
-
-def _del_image(filename):
-    """
-    删除ct图像
-    :param filename:
-    :return: string
-    """
-    img = Img.query.filter_by(filename=filename).first()
-    if img:
-        db.session.delete(img)
-        db.session.commit()
-        os.remove(filename)
-        return "delete success"
-    return "not exist"
-
-
-@app.route('/api/delImage', methods=['POST'])
-@login_required
-@cross_origin()
-def del_image():
-    """
-    删除ct图像
-    :return:
-    ---
-    tags:
-      - model_svr API
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          id: 删除ct图像
-          properties:
-            dwi_file:
-              type: string
-              description: filename
-            adc_file:
-              type: string
-              description: filename
-      - name: Authorization
-        in: header
-        type: string
-        required: true
-        description: token
-    responses:
-      fail:
-        description: 删除失败
-      success:
-        description: 删除成功
-    """
-    try:
-        response_object = {
-            'dwi': 'fail',
-            'adc': 'fail',
-        }
-        dwi_file = request.get_json()['dwi_file']
-        adc_file = request.get_json()['adc_file']
-        if dwi_file == "" and adc_file == "":
-            return failReturn("", "delImage： 参数为空")
-        if dwi_file:
-            _del_image(dwi_file)
-            response_object['dwi'] = 'success'
-        if adc_file:
-            _del_image(adc_file)
-            response_object['adc'] = 'success'
-        return successReturn(response_object, "delImage：删除成功")
-    except Exception as e:
-        return failReturn(format(e), "delImage出错")
 
 
 @app.route('/api/analyze', methods=['POST'])
@@ -678,10 +819,61 @@ def analyze():
         required: true
         description: token
     responses:
-      fail:
-        description: 分析失败
       success:
-        description: 分析成功
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 分析成功
+            data:
+              type: object
+              properties:
+                  results:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            perf_res_imgs:
+                                type: string
+                                example: base64
+                            perf_res_slices:
+                                type: string
+                                example: 21
+                            nonperf_res_imgs:
+                                type: string
+                                example: base64
+                            nonperf_res_slices:
+                                type: string
+                                example: 21
+                            res_path1:
+                                type: string
+                                example: res_path1
+                            res_path2:
+                                type: string
+                                example: res_path2
+                            info:
+                                type: number
+                                format: float
+                                example: 120.0
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: 输入参数缺失 or analyze出错, 请选择正确算法Random Forest 或者 U-Net or analyze出错
+            data:
+              type: string
+              example: error
+        description: 失败
     """
 
     def base64(imgs):
@@ -712,10 +904,11 @@ def analyze():
         if modelType == "Random Forest":
             perf_preds, nonperf_preds, info = stage2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr, adc_arr,
                                                      socketio)
-        else:
+        elif modelType == "U-Net":
             perf_preds, nonperf_preds, info = stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr,
-                                                       adc_arr,
-                                                       socketio)
+                                                       adc_arr, socketio)
+        else:
+            return failReturn("", "analyze出错, 请选择正确算法Random Forest 或者 U-Net")
         perf_res = to_nii(perf_preds, affine)
         save_name1 = "perf_" + uuid.uuid4().hex + ".nii"
         save_path1 = os.path.join(app.config['RESULT_FOLDER'], save_name1)
@@ -737,6 +930,9 @@ def analyze():
         response_object['res_path1'] = save_name1
         response_object['res_path2'] = save_name2
         response_object['info'] = round(info, 2)
+        emailSent(
+            "分析结果已得出，详情请查看网关。\n patientId: " + id + "res_path1" + save_name1 + "res_path2" + save_name2 + "info: " + info,
+            "Analyze Result")
         return successReturn(response_object, "analyze: 分析成功")
     except Exception as e:
         return failReturn(format(e), "analyze出错")
@@ -808,71 +1004,6 @@ def download_file2(filename):
         return failReturn(format(e), "download1出错")
 
 
-def _del_result(id):
-    """
-    删除处理结果
-    :param id:
-    :return: boolean
-    """
-    res = Result.query.filter_by(id=id).first()
-    if not res:
-        return False, "无该result结果"
-    db.session.delete(res)
-    if res.filename1 == "" or res.filename2:
-        return False, "filename1或filename2输入参数缺失"
-    file1 = os.path.join(app.config['RESULT_FOLDER'], res.filename1)
-    file2 = os.path.join(app.config['RESULT_FOLDER'], res.filename2)
-    if os.path.exists(file1):
-        os.remove(file1)
-    if os.path.exists(file2):
-        os.remove(file2)
-    db.session.commit()
-    return True, ""
-
-
-@app.route('/api/delResult', methods=['POST'])
-@login_required
-@cross_origin()
-def del_result():
-    """
-    删除图像结果
-    :return: json
-    ---
-    tags:
-      - model_svr API
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          id: 删除图像结果
-          required:
-            - resultID
-          properties:
-            resultID:
-              type: integer
-              description: resultID
-      - name: Authorization
-        in: header
-        type: string
-        required: true
-        description: token
-    responses:
-      success:
-        description: 删除失败
-      fail:
-        description: 删除成功
-    """
-    try:
-        resultID = request.get_json()['resultID']
-        boolean, res = _del_result(resultID)
-        if not boolean:
-            return failReturn("", "delResult: " + res)
-        return successReturn("", "delResult: 删除成功")
-    except Exception as e:
-        return failReturn(format(e), "delResult出错")
-
-
 @app.route('/api/ROI', methods=['POST'])
 @login_required
 @cross_origin()
@@ -898,10 +1029,34 @@ def ROI_upload():
         required: true
         description: token
     responses:
-      fail:
-        description: 上传失败
       success:
-        description: 上传成功
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 上传成功
+            data:
+              type: file
+              example: file
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: ROI出错 or 上传失败
+            data:
+              type: string
+              example: error
+        description: 失败
     """
     try:
         file = request.files['file']
@@ -950,10 +1105,34 @@ def realimg_upload():
         required: true
         description: token
     responses:
-      fail:
-        description: 上传失败
       success:
-        description: 上传成功
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 上传成功
+            data:
+              type: file
+              example: file
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: realimg出错 or 上传失败
+            data:
+              type: string
+              example: error
+        description: 失败
     """
     try:
         file = request.files['file']
@@ -1014,10 +1193,40 @@ def get_inp_fix():
         required: true
         description: token
     responses:
-      fail:
-        description: 修正失败
       success:
-        description: 修正成功
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 获取成功
+            data:
+              type: object
+              properties:
+                realimg:
+                    type: string
+                    example: filename
+                roi:
+                    type: string
+                    example: filename
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: getInpFix出错 or 获取失败
+            data:
+              type: string
+              example: error
+        description: 失败
     """
     try:
         response_object = {}
@@ -1076,10 +1285,51 @@ def get_result_list():
         required: true
         description: token
     responses:
-      fail:
-        description: 获取失败
       success:
-        description: 获取成功
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 获取成功
+            data:
+              type: object
+              properties:
+                res:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            id:
+                                type: integer
+                                example: 1
+                            modelType:
+                                type: string
+                                example: modelType
+                            doctorName:
+                                type: string
+                                example: doctorName
+                            patientName:
+                                type: string
+                                example: patientName
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: getFixList出错 or 权限不足
+            data:
+              type: string
+              example: error or not allowed
+        description: 失败
     """
     try:
         res = _get_fix_list()
@@ -1091,72 +1341,6 @@ def get_result_list():
             return failReturn("", "getFixList: 获取失败")
     except Exception as e:
         return failReturn(format(e), "getFixList出错")
-
-
-def _del_fix(id):
-    """
-    删除真实图像和roi信息
-    :param id:
-    :return: boolean
-    """
-    res = Result.query.filter_by(id=id).first()
-    if not res:
-        return False
-    if res.realimg is None or res.roi is None:
-        return False, "realimg或roi参数缺失"
-    file1 = os.path.join(app.config['RESULT_FOLDER'], res.realimg)
-    file2 = os.path.join(app.config['RESULT_FOLDER'], res.roi)
-    if os.path.exists(file1):
-        os.remove(file1)
-    if os.path.exists(file2):
-        os.remove(file2)
-    res.realimg = None
-    res.roi = None
-    db.session.commit()
-    return True
-
-
-@app.route('/api/delFix', methods=['POST'])
-@login_required
-@cross_origin()
-def del_fix():
-    """
-    删除真实图像和roi信息
-    :return: json
-    ---
-    tags:
-      - model_svr API
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          id: 删除真实图像和roi信息
-          required:
-            - resultID
-          properties:
-            resultID:
-              type: integer
-              description: resultID
-      - name: Authorization
-        in: header
-        type: string
-        required: true
-        description: token
-    responses:
-      fail:
-        description: 删除失败
-      success:
-        description: 删除成功
-    """
-    try:
-        resultID = request.get_json()['resultID']
-        boolean, res = _del_fix(resultID)
-        if not boolean:
-            return failReturn(res, "delFix: 删除失败")
-        return successReturn("", "delFix: 删除成功")
-    except Exception as e:
-        return failReturn(format(e), "delFix出错")
 
 
 def _eval(gt, pred, dwi):
@@ -1209,10 +1393,37 @@ def eval():
         required: true
         description: token
     responses:
-      fail:
-        description: 发起评测失败
       success:
-        description: 发起评测成功
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success.
+            msg:
+              type: string
+              example: 发起评测成功
+            data:
+              type: object
+              properties:
+                eval:
+                    type: string
+                    example: 与真实结果相比，Perfussion数据模型预测结果准确率为1，特异度为1，灵敏度为1，AUC为1
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: 发起评测失败 or roi参数缺失 or dwi参数缺失 or perf参数缺失 or nonperf参数缺失 or eval出错
+            data:
+              type: string
+              example: error or not allowed
+        description: 失败
     """
     try:
         response_object = {}
@@ -1359,10 +1570,25 @@ def get_report():
         required: true
         description: token
     responses:
-      fail:
-        description: 获取analyze报告失败
       success:
-        description: 获取analyze报告成功
+        schema:
+          type: file
+          example: file
+        description: 成功
+      fail:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: fail.
+            msg:
+              type: string
+              example: getReport出错 or 权限不足无法查看
+            data:
+              type: string
+              example: error or not allowed
+        description: 失败
     """
     try:
         resultID = request.get_json()['resultID']
@@ -1388,4 +1614,4 @@ if __name__ == '__main__':
     perf_model, nonperf_model = stage1_init()
     perf_clf, nonperf_clf = stage2_init()
     app.after_request(after_request)
-    socketio.run(app, host='127.0.0.1', port=5051, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5051, debug=True)

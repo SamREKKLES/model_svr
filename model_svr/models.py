@@ -4,6 +4,7 @@ from torch.nn import Module
 import torch.nn.functional as F
 from non_local import APNB
 
+
 class NoPoolASPP(Module):
     """
     .. image:: _static/img/nopool_aspp_arch.png
@@ -22,6 +23,7 @@ class NoPoolASPP(Module):
         https://www.nature.com/articles/s41598-018-24304-3
 
     """
+
     def __init__(self, drop_rate=0.4, bn_momentum=0.1,
                  base_num_filters=64):
         super().__init__()
@@ -81,13 +83,13 @@ class NoPoolASPP(Module):
         self.branch5b_drop = nn.Dropout2d(drop_rate)
 
         self.concat_drop = nn.Dropout2d(drop_rate)
-        self.concat_bn = nn.BatchNorm2d(6*base_num_filters, momentum=bn_momentum)
+        self.concat_bn = nn.BatchNorm2d(6 * base_num_filters, momentum=bn_momentum)
 
-        self.amort = nn.Conv2d(6*base_num_filters, base_num_filters*2, kernel_size=1)
-        self.amort_bn = nn.BatchNorm2d(base_num_filters*2, momentum=bn_momentum)
+        self.amort = nn.Conv2d(6 * base_num_filters, base_num_filters * 2, kernel_size=1)
+        self.amort_bn = nn.BatchNorm2d(base_num_filters * 2, momentum=bn_momentum)
         self.amort_drop = nn.Dropout2d(drop_rate)
 
-        self.prediction = nn.Conv2d(base_num_filters*2, 1, kernel_size=1)
+        self.prediction = nn.Conv2d(base_num_filters * 2, 1, kernel_size=1)
 
     def forward(self, x):
         """Model forward pass.
@@ -221,6 +223,7 @@ class DownConv_Res(Module):
         x = self.conv2_drop(x)
         return x
 
+
 class UpConv(Module):
     def __init__(self, in_feat, out_feat, drop_rate=0.4, bn_momentum=0.1):
         super(UpConv, self).__init__()
@@ -244,10 +247,11 @@ class Unet(Module):
         Networks for Biomedical Image Segmentation
         ArXiv link: https://arxiv.org/abs/1505.04597
     """
+
     def __init__(self, drop_rate=0.4, bn_momentum=0.1):
         super(Unet, self).__init__()
 
-        #Downsampling path
+        # Downsampling path
         self.conv1 = DownConv(1, 64, drop_rate, bn_momentum)
         self.mp1 = nn.MaxPool2d(2)
 
@@ -290,6 +294,7 @@ class Unet(Module):
 
         return preds
 
+
 def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
@@ -303,23 +308,24 @@ class Unet_Res(Module):
         Networks for Biomedical Image Segmentation
         ArXiv link: https://arxiv.org/abs/1505.04597
     """
+
     def __init__(self, drop_rate=0.4, bn_momentum=0.1):
         super(Unet_Res, self).__init__()
 
-        #Downsampling path
+        # Downsampling path
         self.conv1 = DownConv_Res(1, 64, drop_rate, bn_momentum)
         self.mp1 = nn.MaxPool2d(2)
 
-        self.conv2 = DownConv_Res(64, 128, drop_rate, bn_momentum, downsample = nn.Sequential(
-                conv1x1(64, 128, 1),
-                nn.BatchNorm2d(128),
-            ))
+        self.conv2 = DownConv_Res(64, 128, drop_rate, bn_momentum, downsample=nn.Sequential(
+            conv1x1(64, 128, 1),
+            nn.BatchNorm2d(128),
+        ))
         self.mp2 = nn.MaxPool2d(2)
 
-        self.conv3 = DownConv_Res(128, 256, drop_rate, bn_momentum, downsample = nn.Sequential(
-                conv1x1(128, 256, 1),
-                nn.BatchNorm2d(256),
-            ))
+        self.conv3 = DownConv_Res(128, 256, drop_rate, bn_momentum, downsample=nn.Sequential(
+            conv1x1(128, 256, 1),
+            nn.BatchNorm2d(256),
+        ))
         self.mp3 = nn.MaxPool2d(2)
 
         # Bottom
@@ -356,7 +362,6 @@ class Unet_Res(Module):
         return preds
 
 
-
 class UNet3D(nn.Module):
     """A reference of 3D U-Net model.
 
@@ -369,6 +374,7 @@ class UNet3D(nn.Module):
         Segmentation from Sparse Annotation
         ArXiv link: https://arxiv.org/pdf/1606.06650.pdf
     """
+
     def __init__(self, in_channel, n_classes):
         self.in_channel = in_channel
         self.n_classes = n_classes
@@ -397,9 +403,8 @@ class UNet3D(nn.Module):
         self.dc1 = self.down_conv(64, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.dc0 = self.down_conv(64, n_classes, kernel_size=1, stride=1, padding=0, bias=False)
 
-
     def down_conv(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1,
-                bias=True, batchnorm=False):
+                  bias=True, batchnorm=False):
         if batchnorm:
             layer = nn.Sequential(
                 nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
@@ -410,7 +415,6 @@ class UNet3D(nn.Module):
                 nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
                 nn.LeakyReLU())
         return layer
-
 
     def up_conv(self, in_channels, out_channels, kernel_size=2, stride=2, padding=0,
                 output_padding=0, bias=True):
@@ -471,27 +475,25 @@ class Unet_Non_local(Module):
         Networks for Biomedical Image Segmentation
         ArXiv link: https://arxiv.org/abs/1505.04597
     """
+
     def __init__(self, drop_rate=0.4, bn_momentum=0.1):
         super(Unet_Non_local, self).__init__()
 
-        #Downsampling path
+        # Downsampling path
         self.conv1 = DownConv(2, 64, drop_rate, bn_momentum)
-        self.non1 = APNB(64,64,32,32, dropout=0.05, sizes=([1]), psp_size=(4,8))
+        self.non1 = APNB(64, 64, 32, 32, dropout=0.05, sizes=([1]), psp_size=(4, 8))
         self.mp1 = nn.MaxPool2d(2)
         # self.non1 = APNB(64,64,32,32, dropout=0.05, sizes=([1]), psp_size=(4,8))
 
         self.conv2 = DownConv(64, 128, drop_rate, bn_momentum)
-        self.non2 = APNB(128,128,64,64, dropout=0.05, sizes=([1]), psp_size=(4,8))
+        self.non2 = APNB(128, 128, 64, 64, dropout=0.05, sizes=([1]), psp_size=(4, 8))
         self.mp2 = nn.MaxPool2d(2)
         # self.non2 = APNB(128,128,64,64, dropout=0.05, sizes=([1]), psp_size=(4,8))
 
-
         self.conv3 = DownConv(128, 256, drop_rate, bn_momentum)
         self.mp3 = nn.MaxPool2d(2)
-        self.non3 = APNB(256,256,128,128, dropout=0.05, sizes=([1]), psp_size=(4,8))
+        self.non3 = APNB(256, 256, 128, 128, dropout=0.05, sizes=([1]), psp_size=(4, 8))
         # self.non4 = APNB(256,256,128,128, dropout=0.05, sizes=([1]), psp_size=(4,8))
-
-
 
         # Bottom
         self.conv4 = DownConv(256, 256, drop_rate, bn_momentum)
@@ -516,7 +518,6 @@ class Unet_Non_local(Module):
         x6 = self.mp3(x5)
         # x6 = self.non3(x6)
 
-
         # Bottom
         x7 = self.conv4(x6)
         # x7 = self.non4(x7)
@@ -540,20 +541,20 @@ class Unet_Non_local_standard(Module):
         Networks for Biomedical Image Segmentation
         ArXiv link: https://arxiv.org/abs/1505.04597
     """
+
     def __init__(self, drop_rate=0.4, bn_momentum=0.1):
         super(Unet_Non_local_standard, self).__init__()
 
-        #Downsampling path
+        # Downsampling path
         self.conv1 = DownConv(1, 64, drop_rate, bn_momentum)
-        self.non1 = APNB(64,64,32,32, dropout=0.05, sizes=([1]), psp_size=None)
+        self.non1 = APNB(64, 64, 32, 32, dropout=0.05, sizes=([1]), psp_size=None)
         self.mp1 = nn.MaxPool2d(2)
         # self.non1 = APNB(64,64,32,32, dropout=0.05, sizes=([1]), psp_size=(4,8))
 
         self.conv2 = DownConv(64, 128, drop_rate, bn_momentum)
-        self.non2 = APNB(128,128,64,64, dropout=0.05, sizes=([1]), psp_size=None)
+        self.non2 = APNB(128, 128, 64, 64, dropout=0.05, sizes=([1]), psp_size=None)
         self.mp2 = nn.MaxPool2d(2)
         # self.non2 = APNB(128,128,64,64, dropout=0.05, sizes=([1]), psp_size=(4,8))
-
 
         self.conv3 = DownConv(128, 256, drop_rate, bn_momentum)
         self.mp3 = nn.MaxPool2d(2)
@@ -579,7 +580,6 @@ class Unet_Non_local_standard(Module):
 
         x5 = self.conv3(x4)
         x6 = self.mp3(x5)
-
 
         # Bottom
         x7 = self.conv4(x6)

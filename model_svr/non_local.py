@@ -7,7 +7,6 @@ from torch import nn
 from torch.nn import functional as F
 
 
-
 class PSPModule(nn.Module):
     def __init__(self, sizes=(1, 3, 6, 8), dimension=2):
         super(PSPModule, self).__init__()
@@ -38,7 +37,8 @@ class _SelfAttentionBlock(nn.Module):
         position-aware context features.(w/o concate or add with the input)
     '''
 
-    def __init__(self, in_channels, key_channels, value_channels, out_channels=None, scale=1, norm_type=None,psp_size=(1,3,6,8)):
+    def __init__(self, in_channels, key_channels, value_channels, out_channels=None, scale=1, norm_type=None,
+                 psp_size=(1, 3, 6, 8)):
         super(_SelfAttentionBlock, self).__init__()
         self.scale = scale
         self.in_channels = in_channels
@@ -102,7 +102,8 @@ class _SelfAttentionBlock(nn.Module):
 
 
 class SelfAttentionBlock2D(_SelfAttentionBlock):
-    def __init__(self, in_channels, key_channels, value_channels, out_channels=None, scale=1, norm_type=None,psp_size=(1,3,6,8)):
+    def __init__(self, in_channels, key_channels, value_channels, out_channels=None, scale=1, norm_type=None,
+                 psp_size=(1, 3, 6, 8)):
         super(SelfAttentionBlock2D, self).__init__(in_channels,
                                                    key_channels,
                                                    value_channels,
@@ -122,11 +123,12 @@ class APNB(nn.Module):
         features fused with Object context information.
     """
 
-    def __init__(self, in_channels, out_channels, key_channels, value_channels, dropout, sizes=([1]), norm_type=None,psp_size=(1,3,6,8)):
+    def __init__(self, in_channels, out_channels, key_channels, value_channels, dropout, sizes=([1]), norm_type=None,
+                 psp_size=(1, 3, 6, 8)):
         super(APNB, self).__init__()
         self.stages = []
         self.norm_type = norm_type
-        self.psp_size=psp_size
+        self.psp_size = psp_size
         self.stages = nn.ModuleList(
             [self._make_stage(in_channels, out_channels, key_channels, value_channels, size) for size in sizes])
         self.conv_bn_dropout = nn.Sequential(
@@ -150,12 +152,13 @@ class APNB(nn.Module):
         context = priors[0]
         for i in range(1, len(priors)):
             context += priors[i]
-        output = self.conv_bn_dropout(context)+feats
+        output = self.conv_bn_dropout(context) + feats
         return output
 
 
 if __name__ == '__main__':
-    inp = torch.rand((1,512,112,112))
-    m = APNB(in_channels=512, out_channels=512, key_channels=256, value_channels=256, dropout=0.05, sizes=([1]), psp_size=(4,8))
+    inp = torch.rand((1, 512, 112, 112))
+    m = APNB(in_channels=512, out_channels=512, key_channels=256, value_channels=256, dropout=0.05, sizes=([1]),
+             psp_size=(4, 8))
     out = m(inp)
     print(out.shape)

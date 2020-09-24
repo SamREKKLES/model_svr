@@ -17,7 +17,7 @@ SWAGGER_DESC = "算法部分接口文档"
 MAIL_USER = 'zju205@126.com'
 MAIL_PASS = 'TUVNEXOWFMTJASLN'
 MAIL_HOST = 'smtp.126.com'
-MAIL_REC = ['393707734@qq.com']
+MAIL_REC = ['393707734@qq.com', 'xhzhao@zju.edu.cn']
 
 
 def successReturn(data, msg):

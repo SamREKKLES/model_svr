@@ -14,7 +14,8 @@ def logError(message):
         logger.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(pathname)s[line:%(lineno)d] - %(levelname)s: %(message)s')
         sh = logging.StreamHandler()
-        th = handlers.TimedRotatingFileHandler(filename=log_error, when="D", interval=1, backupCount=7, encoding='utf-8')
+        th = handlers.TimedRotatingFileHandler(filename=log_error, when="D", interval=1, backupCount=7,
+                                               encoding='utf-8')
         sh.setFormatter(formatter)
         th.setFormatter(formatter)
         logger.addHandler(sh)
