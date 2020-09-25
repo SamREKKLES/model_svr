@@ -948,37 +948,36 @@ def analyze():
             data:
               type: object
               properties:
-                  results:
+                perf_res_imgs:
                     type: array
                     items:
-                        type: object
-                        properties:
-                            perf_res_imgs:
-                                type: string
-                                example: base64
-                            perf_res_slices:
-                                type: string
-                                example: 21
-                            nonperf_res_imgs:
-                                type: string
-                                example: base64
-                            nonperf_res_slices:
-                                type: string
-                                example: 21
-                            res_path1:
-                                type: string
-                                example: res_path1
-                            res_path2:
-                                type: string
-                                example: res_path2
-                            info:
-                                type: number
-                                format: float
-                                example: 120.0
-                            size:
-                                type: number
-                                format: float
-                                example: 0.05
+                        type: string
+                        example: [data:image/jpg;base64 xxxxxx, ···]
+                perf_res_slices:
+                    type: string
+                    example: 21
+                nonperf_res_imgs:
+                    type: array
+                    items:
+                        type: string
+                        example: [data:image/jpg;base64 xxxxxx, ···]
+                nonperf_res_slices:
+                    type: string
+                    example: 21
+                res_path1:
+                    type: string
+                    example: res_path1
+                res_path2:
+                    type: string
+                    example: res_path2
+                info:
+                    type: number
+                    format: float
+                    example: 120.0
+                size:
+                    type: number
+                    format: float
+                    example: 0.05
         description: 成功
       fail:
         schema:
