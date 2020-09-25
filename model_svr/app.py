@@ -92,7 +92,7 @@ class Result(db.Model):
     filename1 = db.Column(db.String(255), unique=True)
     filename2 = db.Column(db.String(255), unique=True)
     timestamp = db.Column(db.DateTime)
-    modeltype = db.Column(db.String(255), unique=True)
+    modeltype = db.Column(db.String(255), unique=False)
     dwi_name = db.Column(db.String(255), unique=False)
     adc_name = db.Column(db.String(255), unique=False)
     info = db.Column(db.Float, unique=False)
@@ -100,8 +100,9 @@ class Result(db.Model):
     doctor_id = db.Column(db.Integer)
     realimg = db.Column(db.String(255), unique=True)
     roi = db.Column(db.String(255), unique=True)
+    size = db.Column(db.Float, unique=False)
 
-    def __init__(self, filename1, filename2, modeltype, patient, doctor, dwi_name, adc_name, info):
+    def __init__(self, filename1, filename2, modeltype, patient, doctor, dwi_name, adc_name, info, size):
         self.filename1 = filename1
         self.filename2 = filename2
         self.modeltype = modeltype
@@ -111,6 +112,7 @@ class Result(db.Model):
         self.adc_name = adc_name
         self.info = info
         self.timestamp = datetime.now()
+        self.size = size
 
     def __repr__(self):
         return '<DWI %r>' % self.filename
@@ -183,7 +185,7 @@ db.create_all()
 def _get_current_user():
     """
     获取当前用户
-    :return: User
+      User
     """
     currentID = session["user_id"]
     if currentID:
@@ -198,7 +200,7 @@ def add_item(id, img_type, filename, uploadname):
     :param img_type:
     :param filename:
     :param uploadname:
-    :return: boolean
+      boolean
     """
     patient = Patient.query.filter_by(id=id).first()
     doctorID = session["user_id"]
@@ -214,7 +216,7 @@ def img_to_base64(img):
     """
     img转换
     :param img:
-    :return: string
+      string
     """
     output_buffer = BytesIO()
     plt.imsave(output_buffer, img, cmap='gray')
@@ -228,8 +230,7 @@ def img_to_base64(img):
 @cross_origin()
 def img_upload():
     """
-    img图像上传
-    :return: json
+      img图像上传，返回base64
     ---
     tags:
       - model_svr API
@@ -256,8 +257,19 @@ def img_upload():
     responses:
       success:
         schema:
-          type: file
-          example: file
+          type: object
+          properties:
+            filename:
+                type: string
+                example: filename
+            imgs:
+                type: array
+                items:
+                    type: string
+                    example: [data:image/jpg;base64 xxxxxx, ···]
+            slices:
+                type: string
+                example: 21
         description: 成功
       fail:
         schema:
@@ -275,6 +287,7 @@ def img_upload():
         description: 失败
     """
     try:
+        response_object = {}
         file = request.files['file']
         uploadname = secure_filename(file.filename)
         id = request.form['patientID']
@@ -287,137 +300,151 @@ def img_upload():
             return failReturn("", "imgUpload: 图像上传失败,无该用户")
         else:
             file.save(save_file)
-        resp = make_response(send_file(save_file, mimetype="image/jpeg"))
-        return resp
+        response_object['filename'] = filename
+        response_object['imgs'], response_object['slices'] = get_all_slice(save_file)
+        return successReturn(response_object, "img: 获取成功")
     except Exception as e:
         return failReturn(format(e), "imgUpload出错")
 
 
-def _get_filename(id):
-    """
-    获取img信息
-    :param id:
-    :return: img
-    """
-
-    def to_dict(id):
-        imgs = Img.query.filter_by(patient_id=id).order_by(Img.timestamp).all()[::-1]
-        res = []
-        for r in imgs:
-            res.append({'id': r.id, 'time': r.timestamp, 'filename': r.filename,
-                        'uploadName': r.uploadname, 'type': r.type})
-        return res
-
-    patient = Patient.query.filter_by(id=id).first()
-    doctor = _get_current_user()
-    if doctor.userType == 1 or patient.docter_id == doctor.id:
-        return to_dict(id)
-    else:
-        return None
-
-
-@app.route('/api/getFilename', methods=['POST'])
-@login_required
-@cross_origin()
-def get_filename():
-    """
-    根据病人id获取img信息
-    :return: json
-    ---
-    tags:
-      - model_svr API
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          id: 获取img
-          required:
-            - patientID
-          properties:
-            patientID:
-              type: integer
-              description: patientID
-      - name: Authorization
-        in: header
-        type: string
-        required: true
-        description: token
-    responses:
-      success:
-        schema:
-          type: object
-          properties:
-            status:
-              type: string
-              example: success.
-            msg:
-              type: string
-              example: 获取result成功
-            data:
-              type: object
-              properties:
-                  imgs:
-                    type: array
-                    items:
-                        type: object
-                        properties:
-                            id:
-                                type: string
-                                example: 1
-                            time:
-                                type: string
-                                example: date-time
-                            filename:
-                                type: string
-                                example: filename
-                            uploadName:
-                                type: string
-                                example: uploadName
-                            type:
-                                type: string
-                                example: type
-        description: 成功
-      fail:
-        schema:
-          type: object
-          properties:
-            status:
-              type: string
-              example: fail.
-            msg:
-              type: string
-              example: getfilename出错 or 权限不足或无该result，获取filename失败
-            data:
-              type: string
-              example: error
-        description: 失败
-    """
-    try:
-        json = request.get_json()
-        id = json['patientID']
-        imgs = _get_filename(id)
-        if imgs:
-            return successReturn({"imgs": imgs}, "getResults: 获取result成功")
-        else:
-            return failReturn("", "getResults: 权限不足或无该result，获取filename失败")
-    except Exception as e:
-        return failReturn(format(e), "getfilename出错")
+# def _get_filename(id):
+#     """
+#     获取img信息
+#     :param id:
+#       img
+#     """
+#
+#     def to_dict(id):
+#         imgs = Img.query.filter_by(patient_id=id).order_by(Img.timestamp).all()[::-1]
+#         res = []
+#         for r in imgs:
+#             res.append({'id': r.id, 'time': r.timestamp, 'filename': r.filename,
+#                         'uploadName': r.uploadname, 'type': r.type})
+#         return res
+#
+#     patient = Patient.query.filter_by(id=id).first()
+#     doctor = _get_current_user()
+#     if doctor.userType == 1 or patient.docter_id == doctor.id:
+#         return to_dict(id)
+#     else:
+#         return None
+#
+#
+# @app.route('/api/getFilename', methods=['POST'])
+# @login_required
+# @cross_origin()
+# def get_filename():
+#     """
+#     根据病人id获取img信息
+#       json
+#     ---
+#     tags:
+#       - model_svr API
+#     parameters:
+#       - name: body
+#         in: body
+#         required: true
+#         schema:
+#           id: 获取img
+#           required:
+#             - patientID
+#           properties:
+#             patientID:
+#               type: integer
+#               description: patientID
+#       - name: Authorization
+#         in: header
+#         type: string
+#         required: true
+#         description: token
+#     responses:
+#       success:
+#         schema:
+#           type: object
+#           properties:
+#             status:
+#               type: string
+#               example: success.
+#             msg:
+#               type: string
+#               example: 获取result成功
+#             data:
+#               type: object
+#               properties:
+#                   imgs:
+#                     type: array
+#                     items:
+#                         type: object
+#                         properties:
+#                             id:
+#                                 type: string
+#                                 example: 1
+#                             time:
+#                                 type: string
+#                                 example: date-time
+#                             filename:
+#                                 type: string
+#                                 example: filename
+#                             uploadName:
+#                                 type: string
+#                                 example: uploadName
+#                             type:
+#                                 type: string
+#                                 example: type
+#         description: 成功
+#       fail:
+#         schema:
+#           type: object
+#           properties:
+#             status:
+#               type: string
+#               example: fail.
+#             msg:
+#               type: string
+#               example: getfilename出错 or 权限不足或无该result，获取filename失败
+#             data:
+#               type: string
+#               example: error
+#         description: 失败
+#     """
+#     try:
+#         json = request.get_json()
+#         id = json['patientID']
+#         imgs = _get_filename(id)
+#         if imgs:
+#             return successReturn({"imgs": imgs}, "getResults: 获取result成功")
+#         else:
+#             return failReturn("", "getResults: 权限不足或无该result，获取filename失败")
+#     except Exception as e:
+#         return failReturn(format(e), "getfilename出错")
 
 
 def _get_results(id):
     """
     获取result信息
     :param id:
-    :return: result
+      result
     """
 
     def to_dicts(p):
-        results = Result.query.filter_by(patient_id=p.id).order_by(Result.timestamp).all()[::-1]
+        results = Result.query.filter_by(patient_id=p.id).order_by(Result.timestamp.desc()).all()[::-1]
         res = []
+        dwi_file = {}
+        adc_file = {}
+        perfusion = {}
+        non_perfusion = {}
         for r in results:
-            res.append({'id': r.id, 'time': r.timestamp, 'name1': r.filename1, 'name2': r.filename2,
-                        'modelType': r.modeltype, "patientName": p.username, "info": r.info})
+            dwi_file['dwi_file'] = r.dwi_name
+            dwi_file['dwi_imgs'], dwi_file['dwi_slices'] = get_all_slice(r.dwi_name)
+            adc_file['adc_file'] = r.adc_name
+            adc_file['adc_imgs'], adc_file['adc_slices'] = get_all_slice(r.adc_name)
+            perfusion['perfusion_file'] = r.filename1
+            perfusion['perfusion_imgs'], perfusion['perfusion_slices'] = get_all_slice(r.filename1)
+            non_perfusion['non_perfusion_file'] = r.filename2
+            non_perfusion['non_perfusion_imgs'], non_perfusion['non_perfusion_slices'] = get_all_slice(r.filename2)
+            res.append({'id': r.id, 'time': r.timestamp, 'dwi': dwi_file, 'adc': adc_file,
+                        'perfusion': perfusion, 'non_perfusion': non_perfusion, 'modelType': r.modeltype,
+                        "info": r.info, "size_percent": r.size})
         return res
 
     patient = Patient.query.filter_by(id=id).first()
@@ -431,10 +458,9 @@ def _get_results(id):
 @app.route('/api/getResultsByPatient', methods=['POST'])
 @login_required
 @cross_origin()
-def get_results_by_patient():
+def get_results_by_patientID():
     """
-    根据病人id获取result
-    :return: json
+      根据病人id获取result，对应影响管理部分的api
     ---
     tags:
       - model_svr API
@@ -480,22 +506,73 @@ def get_results_by_patient():
                             time:
                                 type: string
                                 format: date-time
-                            name1:
-                                type: string
-                                example: filename1
-                            name2:
-                                type: string
-                                example: filename2
+                            dwi:
+                                type: object
+                                properties:
+                                    dwi_file:
+                                        type: string
+                                        example: dwi_file
+                                    dwi_imgs:
+                                        type: array
+                                        items:
+                                            type: string
+                                            example: [data:image/jpg;base64 xxxxxx, ···]
+                                    dwi_slices:
+                                        type: string
+                                        example: 21
+                            adc:
+                                type: object
+                                properties:
+                                    adc_file:
+                                        type: string
+                                        example: adc_file
+                                    adc_imgs:
+                                        type: array
+                                        items:
+                                            type: string
+                                            example: [data:image/jpg;base64 xxxxxx, ···]
+                                    adc_slices:
+                                        type: string
+                                        example: 21
+                            perfusion:
+                                type: object
+                                properties:
+                                    perfusion_file:
+                                        type: string
+                                        example: perfusion_file
+                                    perfusion_imgs:
+                                        type: array
+                                        items:
+                                            type: string
+                                            example: [data:image/jpg;base64 xxxxxx, ···]
+                                    perfusion_slices:
+                                        type: string
+                                        example: 21
+                            non_perfusion:
+                                type: object
+                                properties:
+                                    non_perfusion_file:
+                                        type: string
+                                        example: non_perfusion_file
+                                    non_perfusion_imgs:
+                                        type: array
+                                        items:
+                                            type: string
+                                            example: [data:image/jpg;base64 xxxxxx, ···]
+                                    non_perfusion_slices:
+                                        type: string
+                                        example: 21
                             modelType:
                                 type: string
-                                example: modelType
-                            patientName:
-                                type: string
-                                example: patientName
+                                example: Random Forest
                             info:
                                 type: number
                                 format: float
                                 example: 120.0
+                            size_percent:
+                                type: number
+                                format: float
+                                example: 0.5
         description: 成功
       fail:
         schema:
@@ -516,6 +593,7 @@ def get_results_by_patient():
         json = request.get_json()
         id = json['patientID']
         results = _get_results(id)
+
         if results:
             return successReturn({"results": results}, "getResults: 获取result成功")
         else:
@@ -524,150 +602,156 @@ def get_results_by_patient():
         return failReturn(format(e), "getResults出错")
 
 
-def _get_inp_out(id):
-    """
-    获取图像结果信息
-    :param id:
-    :return: adc_file, dwi_file, res_file1, res_file2, info
-    """
-    result = Result.query.filter_by(id=id).first()
-    if not result:
-        return None, None, None, None, None
-    adc_file = result.adc_name
-    dwi_file = result.dwi_name
-    res_file1 = result.filename1
-    res_file2 = result.filename2
-    info = result.info
-    return adc_file, dwi_file, res_file1, res_file2, info
-
-
-@app.route('/api/getInpOut', methods=['POST'])
-@login_required
-@cross_origin()
-def get_inp_out():
-    """
-    获取图像信息
-    :return: json
-    ---
-    tags:
-      - model_svr API
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          id: 获取图像信息
-          required:
-            - resultID
-          properties:
-            resultID:
-              type: integer
-              description: resultID
-      - name: Authorization
-        in: header
-        type: string
-        required: true
-        description: token
-    responses:
-      success:
-        schema:
-          type: object
-          properties:
-            status:
-              type: string
-              example: success.
-            msg:
-              type: string
-              example: 成功获取数据信息
-            data:
-              type: object
-              properties:
-                dwi_file:
-                    type: string
-                    example: filename
-                dwi_imgs:
-                    type: string
-                    example: base64
-                dwi_slices:
-                    type: string
-                    example: 21
-                adc_file:
-                    type: string
-                    example: filename
-                adc_imgs:
-                    type: string
-                    example: base64
-                adc_slices:
-                    type: string
-                    example: 21
-                res_file1:
-                    type: string
-                    example: filename
-                res_imgs1:
-                    type: string
-                    example: base64
-                res_slices1:
-                    type: string
-                    example: 21
-                res_file2:
-                    type: string
-                    example: filename
-                res_imgs2:
-                    type: string
-                    example: base64
-                res_slices2:
-                    type: string
-                    example: 21
-                info:
-                    type: number
-                    format: float
-                    example: 120.0
-        description: 成功
-      fail:
-        schema:
-          type: object
-          properties:
-            status:
-              type: string
-              example: fail.
-            msg:
-              type: string
-              example: 无数据信息 or getInpOut出错
-            data:
-              type: string
-              example: error
-        description: 失败
-    """
-    try:
-        response_object = {}
-        json = request.get_json()
-        id = json['resultID']
-        adc_file, dwi_file, res_file1, res_file2, info = _get_inp_out(id)
-        if adc_file or dwi_file or res_file1 or res_file2:
-            if dwi_file:
-                response_object['dwi_file'] = dwi_file
-                dwi_file = os.path.join(app.config['UPLOAD_FOLDER'], dwi_file)
-                response_object['dwi_imgs'], response_object['dwi_slices'] = get_all_slice(dwi_file)
-            if adc_file:
-                response_object['adc_file'] = adc_file
-                adc_file = os.path.join(app.config['UPLOAD_FOLDER'], adc_file)
-                response_object['adc_imgs'], response_object['adc_slices'] = get_all_slice(adc_file)
-            if res_file1:
-                response_object['res_file1'] = res_file1
-                res_file1 = os.path.join(app.config['RESULT_FOLDER'], res_file1)
-                response_object['res_imgs1'], response_object['res_slices1'] = get_all_slice(res_file1, thres=0.25)
-            if res_file2:
-                response_object['res_file2'] = res_file2
-                res_file2 = os.path.join(app.config['RESULT_FOLDER'], res_file2)
-                response_object['res_imgs2'], response_object['res_slices2'] = get_all_slice(res_file2, thres=0.25)
-            if info:
-                info = round(info, 2)
-                response_object['info'] = info
-        else:
-            return failReturn("", "getInpOut: 无数据信息")
-        return successReturn(response_object, "getInpOut: 成功获取数据信息")
-    except Exception as e:
-        return failReturn(format(e), "getInpOut出错")
+# def _get_inp_out(id):
+#     """
+#     获取图像结果信息
+#     :param id:
+#       adc_file, dwi_file, res_file1, res_file2, info
+#     """
+#     result = Result.query.filter_by(id=id).first()
+#     if not result:
+#         return None, None, None, None, None, None, None
+#     adc_file = result.adc_name
+#     dwi_file = result.dwi_name
+#     res_file1 = result.filename1
+#     res_file2 = result.filename2
+#     info = result.info
+#     modelType = result.modeltype
+#     timeStamp = result.timestamp
+#     return adc_file, dwi_file, res_file1, res_file2, info, modelType, timeStamp
+#
+#
+# @app.route('/api/getInpOut', methods=['POST'])
+# @login_required
+# @cross_origin()
+# def get_inp_out():
+#     """
+#     获取图像信息
+#       json
+#     ---
+#     tags:
+#       - model_svr API
+#     parameters:
+#       - name: body
+#         in: body
+#         required: true
+#         schema:
+#           id: 获取图像信息
+#           required:
+#             - resultID
+#           properties:
+#             resultID:
+#               type: integer
+#               description: resultID
+#       - name: Authorization
+#         in: header
+#         type: string
+#         required: true
+#         description: token
+#     responses:
+#       success:
+#         schema:
+#           type: object
+#           properties:
+#             status:
+#               type: string
+#               example: success.
+#             msg:
+#               type: string
+#               example: 成功获取数据信息
+#             data:
+#               type: object
+#               properties:
+#                 dwi_file:
+#                     type: string
+#                     example: filename
+#                 dwi_imgs:
+#                     type: string
+#                     example: base64
+#                 dwi_slices:
+#                     type: string
+#                     example: 21
+#                 adc_file:
+#                     type: string
+#                     example: filename
+#                 adc_imgs:
+#                     type: string
+#                     example: base64
+#                 adc_slices:
+#                     type: string
+#                     example: 21
+#                 res_file1:
+#                     type: string
+#                     example: filename
+#                 res_imgs1:
+#                     type: string
+#                     example: base64
+#                 res_slices1:
+#                     type: string
+#                     example: 21
+#                 res_file2:
+#                     type: string
+#                     example: filename
+#                 res_imgs2:
+#                     type: string
+#                     example: base64
+#                 res_slices2:
+#                     type: string
+#                     example: 21
+#                 info:
+#                     type: number
+#                     format: float
+#                     example: 120.0
+#         description: 成功
+#       fail:
+#         schema:
+#           type: object
+#           properties:
+#             status:
+#               type: string
+#               example: fail.
+#             msg:
+#               type: string
+#               example: 无数据信息 or getInpOut出错
+#             data:
+#               type: string
+#               example: error
+#         description: 失败
+#     """
+#     try:
+#         response_object = {}
+#         json = request.get_json()
+#         id = json['resultID']
+#         adc_file, dwi_file, res_file1, res_file2, info, modelType, timeStamp = _get_inp_out(id)
+#         if adc_file or dwi_file or res_file1 or res_file2:
+#             if dwi_file:
+#                 response_object['dwi_file'] = dwi_file
+#                 dwi_file = os.path.join(app.config['UPLOAD_FOLDER'], dwi_file)
+#                 response_object['dwi_imgs'], response_object['dwi_slices'] = get_all_slice(dwi_file)
+#             if adc_file:
+#                 response_object['adc_file'] = adc_file
+#                 adc_file = os.path.join(app.config['UPLOAD_FOLDER'], adc_file)
+#                 response_object['adc_imgs'], response_object['adc_slices'] = get_all_slice(adc_file)
+#             if res_file1:
+#                 response_object['res_file1'] = res_file1
+#                 res_file1 = os.path.join(app.config['RESULT_FOLDER'], res_file1)
+#                 response_object['res_imgs1'], response_object['res_slices1'] = get_all_slice(res_file1, thres=0.25)
+#             if res_file2:
+#                 response_object['res_file2'] = res_file2
+#                 res_file2 = os.path.join(app.config['RESULT_FOLDER'], res_file2)
+#                 response_object['res_imgs2'], response_object['res_slices2'] = get_all_slice(res_file2, thres=0.25)
+#             if info:
+#                 info = round(info, 2)
+#                 response_object['info'] = info
+#             if modelType:
+#                 response_object['modelType'] = modelType
+#             if timeStamp:
+#                 response_object['timeStamp'] = timeStamp
+#         else:
+#             return failReturn("", "getInpOut: 无数据信息")
+#         return successReturn(response_object, "getInpOut: 成功获取数据信息")
+#     except Exception as e:
+#         return failReturn(format(e), "getInpOut出错")
 
 
 def get_all_slice(filename, thres=None):
@@ -675,7 +759,7 @@ def get_all_slice(filename, thres=None):
     获取所有切片
     :param filename:
     :param thres:
-    :return: res
+      res
     """
     if not filename:
         return None, None
@@ -690,13 +774,38 @@ def get_all_slice(filename, thres=None):
     return res, str(imgs.shape[2])
 
 
-@app.route('/api/img', methods=['POST'])
+def _perfImgs(id):
+    """
+    获取perfImgs信息
+    :param id:
+      result
+    """
+
+    def perfImgs_dicts(p):
+        results = Result.query.filter_by(patient_id=p.id).order_by(Result.timestamp.desc()).all()[::-1]
+        res = []
+        perfusion = {}
+        for r in results:
+            perfusion['perfusion_file'] = r.filename1
+            perfusion['perfusion_imgs'], perfusion['perfusion_slices'] = get_all_slice(r.filename1)
+            text_info = str(r.timestamp) + " 梗死区域面积为: " + str(r.size) + " 溶栓治疗获益为: " + str(r.info)
+            res.append({'id': r.id, 'perfusion': perfusion, "text_info": text_info})
+        return res
+
+    patient = Patient.query.filter_by(id=id).first()
+    doctor = _get_current_user()
+    if doctor.userType == 1 or patient.docter_id == doctor.id:
+        return perfImgs_dicts(patient)
+    else:
+        return None
+
+
+@app.route('/api/getPerfImgs', methods=['POST'])
 @login_required
 @cross_origin()
-def get_image():
+def get_perfImgs():
     """
-    获取ct结果 dwi或者adc
-    :return: json
+      对应图像展窗部分的显示
     ---
     tags:
       - model_svr API
@@ -732,18 +841,31 @@ def get_image():
             data:
               type: object
               properties:
-                dwi_imgs:
-                    type: string
-                    example: base64
-                dwi_slices:
-                    type: string
-                    example: 21
-                adc_imgs:
-                    type: string
-                    example: base64
-                adc_slices:
-                    type: string
-                    example: 21
+                perf_imgs:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                        id:
+                            type: string
+                            example: 1
+                        perfusion:
+                            type: object
+                            properties:
+                                perfusion_file:
+                                    type: string
+                                    example: dwi_file
+                                perfusion_imgs:
+                                    type: array
+                                    items:
+                                        type: string
+                                        example: [data:image/jpg;base64 xxxxxx, ···]
+                                perfusion_slices:
+                                    type: string
+                                    example: 21
+                        text_info:
+                            type: string
+                            example: "2020-9-25 00:00:00 梗死区域面积比例为: 0.5 溶栓治疗获益为: 120.0"
         description: 成功
       fail:
         schema:
@@ -762,18 +884,14 @@ def get_image():
     """
     try:
         response_object = {}
-        dwi_file = request.get_json()['dwi']
-        adc_file = request.get_json()['adc']
-
-        if dwi_file == "" and adc_file == "":
-            return failReturn("", "img: 参数为空")
-        if dwi_file:
-            dwi_file = os.path.join(app.config['UPLOAD_FOLDER'], dwi_file)
-            response_object['dwi_imgs'], response_object['dwi_slices'] = get_all_slice(dwi_file)
-        if adc_file:
-            adc_file = os.path.join(app.config['UPLOAD_FOLDER'], adc_file)
-            response_object['adc_imgs'], response_object['adc_slices'] = get_all_slice(adc_file)
-        return successReturn(response_object, "img: 获取成功")
+        json = request.get_json()
+        id = json['patientID']
+        perfImgs = _perfImgs(id)
+        if perfImgs:
+            response_object['perf_imgs'] = perfImgs
+            return successReturn(response_object, "img: 获取成功")
+        else:
+            return failReturn("", "病人图像结果未找到")
     except Exception as e:
         return failReturn(format(e), "img出错")
 
@@ -783,9 +901,7 @@ def get_image():
 @cross_origin()
 def analyze():
     """
-    结果分析
-     "Random Forest" or "Random Forest+U-Net"
-    :return: json
+      结果预测"Random Forest" or "Random Forest+U-Net"
     ---
     tags:
       - model_svr API
@@ -902,8 +1018,8 @@ def analyze():
         adc_arr = imgs.get('adc')
         affine = imgs.get('affine')
         if modelType == "Random Forest":
-            perf_preds, nonperf_preds, info = stage2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr, adc_arr,
-                                                     socketio)
+            perf_preds, nonperf_preds, info, size = stage2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr,
+                                                           adc_arr, socketio)
         elif modelType == "U-Net":
             perf_preds, nonperf_preds, info = stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr,
                                                        adc_arr, socketio)
@@ -918,7 +1034,7 @@ def analyze():
         save_path2 = os.path.join(app.config['RESULT_FOLDER'], save_name2)
         nonperf_res.to_filename(save_path2)
         doctor = session["user_id"]
-        res_to_db = Result(save_name1, save_name2, modelType, id, doctor, dwi_name, adc_name, float(info))
+        res_to_db = Result(save_name1, save_name2, modelType, id, doctor, dwi_name, adc_name, float(info), float(size))
         db.session.add(res_to_db)
         db.session.commit()
         perf_preds[perf_preds >= 0.2] = 1
@@ -930,9 +1046,10 @@ def analyze():
         response_object['res_path1'] = save_name1
         response_object['res_path2'] = save_name2
         response_object['info'] = round(info, 2)
+        response_object['size'] = round(size, 2)
         emailSent(
-            "分析结果已得出，详情请查看网关。\n patientId: " + id + "res_path1" + save_name1 + "res_path2" + save_name2 + "info: " + info,
-            "Analyze Result")
+            "分析结果已得出，详情请查看网关。\n patientId: " + str(id) + "res_path1" + save_name1 + "res_path2" +
+            save_name2 + "info: " + str(info), "Analyze Result")
         return successReturn(response_object, "analyze: 分析成功")
     except Exception as e:
         return failReturn(format(e), "analyze出错")
@@ -945,7 +1062,7 @@ def download_file1(filename):
     """
     下载目录一
     :param filename:
-    :return:
+
     ---
     tags:
       - model_svr API
@@ -978,7 +1095,7 @@ def download_file2(filename):
     """
     下载目录二
     :param filename:
-    :return:
+
     ---
     tags:
       - model_svr API
@@ -1004,13 +1121,111 @@ def download_file2(filename):
         return failReturn(format(e), "download1出错")
 
 
+# def _get_fix_list():
+#     """
+#     获取结果信息列表
+#       res
+#     """
+#     doctor = _get_current_user()
+#     if doctor.userType == 1:
+#         results = Result.query.all()
+#         res = []
+#         for r in results:
+#             if r.realimg and r.roi:
+#                 users = User.query.filter_by(id=r.doctor_id).first()
+#                 patients = Patient.query.filter_by(id=r.patient_id).first()
+#                 res.append({"id": r.id, "modelType": r.modeltype,
+#                             "doctorName": users.realname,
+#                             "patientName": patients.username
+#                             })
+#         return res
+#
+#     else:
+#         return "not allowed"
+#
+#
+# @app.route('/api/getResultList', methods=['GET'])
+# @login_required
+# @cross_origin()
+# def get_result_list():
+#     """
+#     获取结果信息列表
+#       json
+#     ---
+#     tags:
+#       - model_svr API
+#     parameters:
+#       - name: Authorization
+#         in: header
+#         type: string
+#         required: true
+#         description: token
+#     responses:
+#       success:
+#         schema:
+#           type: object
+#           properties:
+#             status:
+#               type: string
+#               example: success.
+#             msg:
+#               type: string
+#               example: 获取成功
+#             data:
+#               type: object
+#               properties:
+#                 res:
+#                     type: array
+#                     items:
+#                         type: object
+#                         properties:
+#                             id:
+#                                 type: integer
+#                                 example: 1
+#                             modelType:
+#                                 type: string
+#                                 example: modelType
+#                             doctorName:
+#                                 type: string
+#                                 example: doctorName
+#                             patientName:
+#                                 type: string
+#                                 example: patientName
+#         description: 成功
+#       fail:
+#         schema:
+#           type: object
+#           properties:
+#             status:
+#               type: string
+#               example: fail.
+#             msg:
+#               type: string
+#               example: getFixList出错 or 权限不足
+#             data:
+#               type: string
+#               example: error or not allowed
+#         description: 失败
+#     """
+#     try:
+#         res = _get_fix_list()
+#         if res == "not allowed":
+#             return failReturn("not allowed", "getFixList: 权限不足")
+#         elif res:
+#             return successReturn({'res': res}, "getFixList: 获取成功")
+#         else:
+#             return failReturn("", "getFixList: 获取失败")
+#     except Exception as e:
+#         return failReturn(format(e), "getFixList出错")
+
+
 @app.route('/api/ROI', methods=['POST'])
 @login_required
 @cross_origin()
 def ROI_upload():
     """
     脑部梗死区上传
-    :return: json
+      json
     ---
     tags:
       - model_svr API
@@ -1040,8 +1255,22 @@ def ROI_upload():
               type: string
               example: 上传成功
             data:
-              type: file
-              example: file
+              type: object
+              properties:
+                roi:
+                  type: object
+                  properties:
+                    roi_file:
+                        type: string
+                        example: roi_file
+                    roi_imgs:
+                        type: array
+                        items:
+                            type: string
+                            example: [data:image/jpg;base64 xxxxxx, ···]
+                    roi_slices:
+                        type: string
+                        example: 21
         description: 成功
       fail:
         schema:
@@ -1059,6 +1288,7 @@ def ROI_upload():
         description: 失败
     """
     try:
+        response_object = {}
         file = request.files['file']
         uploadname = secure_filename(file.filename)
         resultID = request.form['resultID']
@@ -1075,7 +1305,10 @@ def ROI_upload():
             r.roi = filename
             db.session.commit()
             file.save(save_file)
-        return successReturn("", "ROI: 上传成功")
+        roi = {'roi_file': save_file, 'roi_imgs': get_all_slice(save_file)[0],
+               'roi_slices': get_all_slice(save_file)[1]}
+        response_object['roi'] = roi
+        return successReturn(response_object, "ROI: 上传成功")
     except Exception as e:
         return failReturn(format(e), "ROI出错")
 
@@ -1086,7 +1319,7 @@ def ROI_upload():
 def realimg_upload():
     """
     真实图像上传
-    :return: json
+      json
     ---
     tags:
       - model_svr API
@@ -1116,8 +1349,22 @@ def realimg_upload():
               type: string
               example: 上传成功
             data:
-              type: file
-              example: file
+              type: object
+              properties:
+                realimg:
+                  type: object
+                  properties:
+                    realimg_file:
+                        type: string
+                        example: realimg_file
+                    realimg_imgs:
+                        type: array
+                        items:
+                            type: string
+                            example: [data:image/jpg;base64 xxxxxx, ···]
+                    realimg_slices:
+                        type: string
+                        example: 21
         description: 成功
       fail:
         schema:
@@ -1135,6 +1382,7 @@ def realimg_upload():
         description: 失败
     """
     try:
+        response_object = {}
         file = request.files['file']
         uploadname = secure_filename(file.filename)
         resultID = request.form['resultID']
@@ -1151,27 +1399,30 @@ def realimg_upload():
             r.realimg = filename
             db.session.commit()
             file.save(save_file)
-        return successReturn("", "realimg: 上传成功")
+        realimg = {'realimg_file': save_file, 'realimg_imgs': get_all_slice(save_file)[0],
+                   'realimg_slices': get_all_slice(save_file)[1]}
+        response_object['realimg'] = realimg
+        return successReturn(response_object, "realimg: 上传成功")
     except Exception as e:
         return failReturn(format(e), "realimg出错")
 
 
-def _get_inp_fix(id):
+def _get_roi_and_real(id):
     result = Result.query.filter_by(id=id).first()
     if not result:
         return None, None
-    realimg = result.realimg
-    roi = result.roi
+    save_path = app.config['UPLOAD_FOLDER']
+    realimg = os.path.join(save_path, result.realimg)
+    roi = os.path.join(save_path, result.roi)
     return realimg, roi
 
 
-@app.route('/api/getInpFix', methods=['POST'])
+@app.route('/api/getRoiAndReal', methods=['POST'])
 @login_required
 @cross_origin()
-def get_inp_fix():
+def get_roi_and_real():
     """
-    获取roi和realImg
-    :return: json
+      获取roi和realImg
     ---
     tags:
       - model_svr API
@@ -1207,11 +1458,33 @@ def get_inp_fix():
               type: object
               properties:
                 realimg:
-                    type: string
-                    example: filename
+                    type: object
+                    properties:
+                        realimg_file:
+                            type: string
+                            example: realimg_file
+                        realimg_imgs:
+                            type: array
+                            items:
+                                type: string
+                                example: [data:image/jpg;base64 xxxxxx, ···]
+                        realimg_slices:
+                            type: string
+                            example: 21
                 roi:
-                    type: string
-                    example: filename
+                    type: object
+                    properties:
+                        roi_file:
+                            type: string
+                            example: roi_file
+                        roi_imgs:
+                            type: array
+                            items:
+                                type: string
+                                example: [data:image/jpg;base64 xxxxxx, ···]
+                        roi_slices:
+                            type: string
+                            example: 21
         description: 成功
       fail:
         schema:
@@ -1232,11 +1505,15 @@ def get_inp_fix():
         response_object = {}
         json = request.get_json()
         resultID = json['resultID']
-        realimg, roi = _get_inp_fix(resultID)
+        realimg, roi = _get_roi_and_real(resultID)
         if realimg or roi:
             if realimg:
+                realimg = {'realimg_file': realimg, 'realimg_imgs': get_all_slice(realimg)[0],
+                           'realimg_slices': get_all_slice(realimg)[1]}
                 response_object['realimg'] = realimg
             if roi:
+                roi = {'roi_file': roi, 'roi_imgs': get_all_slice(roi)[0],
+                       'roi_slices': get_all_slice(roi)[1]}
                 response_object['roi'] = roi
         else:
             return failReturn("", "getInpFix: 获取失败")
@@ -1245,111 +1522,13 @@ def get_inp_fix():
         return failReturn(format(e), "getInpFix出错")
 
 
-def _get_fix_list():
-    """
-    获取结果信息列表
-    :return: res
-    """
-    doctor = _get_current_user()
-    if doctor.userType == 1:
-        results = Result.query.all()
-        res = []
-        for r in results:
-            if r.realimg and r.roi:
-                users = User.query.filter_by(id=r.doctor_id).first()
-                patients = Patient.query.filter_by(id=r.patient_id).first()
-                res.append({"id": r.id, "modelType": r.modeltype,
-                            "doctorName": users.realname,
-                            "patientName": patients.username
-                            })
-        return res
-
-    else:
-        return "not allowed"
-
-
-@app.route('/api/getResultList', methods=['GET'])
-@login_required
-@cross_origin()
-def get_result_list():
-    """
-    获取结果信息列表
-    :return: json
-    ---
-    tags:
-      - model_svr API
-    parameters:
-      - name: Authorization
-        in: header
-        type: string
-        required: true
-        description: token
-    responses:
-      success:
-        schema:
-          type: object
-          properties:
-            status:
-              type: string
-              example: success.
-            msg:
-              type: string
-              example: 获取成功
-            data:
-              type: object
-              properties:
-                res:
-                    type: array
-                    items:
-                        type: object
-                        properties:
-                            id:
-                                type: integer
-                                example: 1
-                            modelType:
-                                type: string
-                                example: modelType
-                            doctorName:
-                                type: string
-                                example: doctorName
-                            patientName:
-                                type: string
-                                example: patientName
-        description: 成功
-      fail:
-        schema:
-          type: object
-          properties:
-            status:
-              type: string
-              example: fail.
-            msg:
-              type: string
-              example: getFixList出错 or 权限不足
-            data:
-              type: string
-              example: error or not allowed
-        description: 失败
-    """
-    try:
-        res = _get_fix_list()
-        if res == "not allowed":
-            return failReturn("not allowed", "getFixList: 权限不足")
-        elif res:
-            return successReturn({'res': res}, "getFixList: 获取成功")
-        else:
-            return failReturn("", "getFixList: 获取失败")
-    except Exception as e:
-        return failReturn(format(e), "getFixList出错")
-
-
 def _eval(gt, pred, dwi):
     """
     评测
     :param gt:
     :param pred:
     :param dwi:
-    :return: accuracy, specifity, sensitivity, auc
+      accuracy, specifity, sensitivity, auc
     """
     idx = np.where(dwi.flatten() > 1000)
     preds = pred.flatten()[idx]
@@ -1368,7 +1547,7 @@ def _eval(gt, pred, dwi):
 def eval():
     """
     发起评测获得结果
-    :return: json
+      json
     ---
     tags:
       - model_svr API
@@ -1386,7 +1565,7 @@ def eval():
               description: resultID
             dataset:
               type: integer
-              description: 0为Perfussion数据模型，其他为Non-Perfussion数据模型
+              description: 0为perfusion数据模型，其他为Non-perfusion数据模型
       - name: Authorization
         in: header
         type: string
@@ -1408,7 +1587,7 @@ def eval():
               properties:
                 eval:
                     type: string
-                    example: 与真实结果相比，Perfussion数据模型预测结果准确率为1，特异度为1，灵敏度为1，AUC为1
+                    example: 与真实结果相比，perfusion数据模型预测结果准确率为1，特异度为1，灵敏度为1，AUC为1
         description: 成功
       fail:
         schema:
@@ -1454,11 +1633,11 @@ def eval():
         nonperf = np.squeeze(nonperf)
         if dataset == 0:
             accuracy, specifity, sensitivity, auc = _eval(roi, perf, dwi)
-            response_object['eval'] = '与真实结果相比，Perfussion数据模型预测结果准确率为{}，特异度为{}，灵敏度为{}，AUC为{}'. \
+            response_object['eval'] = '与真实结果相比，perfusion数据模型预测结果准确率为{}，特异度为{}，灵敏度为{}，AUC为{}'. \
                 format(round(accuracy, 2), round(specifity, 2), round(sensitivity, 2), round(auc, 2))
         else:
             accuracy, specifity, sensitivity, auc = _eval(roi, nonperf, dwi)
-            response_object['eval'] = '与真实结果相比，Non-Perfussion数据模型预测结果准确率为{}，特异度为{}，灵敏度为{}，AUC为{}'. \
+            response_object['eval'] = '与真实结果相比，Non-perfusion数据模型预测结果准确率为{}，特异度为{}，灵敏度为{}，AUC为{}'. \
                 format(round(accuracy, 2), round(specifity, 2), round(sensitivity, 2), round(auc, 2))
         return successReturn(response_object, "eval: 发起评测成功")
     except Exception as e:
@@ -1548,7 +1727,7 @@ def _img_process(imgName):
 def get_report():
     """
     获取analyze报告
-    :return: json
+      json
     ---
     tags:
       - model_svr API

@@ -102,7 +102,7 @@ def login_required(f):
 
     @wraps(f)
     def wrapper(*args, **kwargs):
-        token = request.headers.get("Authorization", default=None)
+        token = request.headers.get("authorization", default=None)
         if not token:
             log.logError("login_required: 未登录请先登陆")
             return failReturn("", "未登录请先登陆")
