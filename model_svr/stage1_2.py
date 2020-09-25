@@ -156,6 +156,7 @@ def stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr, adc_arr,
     perf_preds1, nonperf_preds1 = _stage1(perf_model, nonperf_model, dwi_arr, adc_arr, socketio)
     perf_ress = []
     nonperf_ress = []
+    size0, size1 = 0, 0
     for idx in range(dwi_arr.shape[2]):
         socketio.emit("process", "{}".format((idx + 1) / dwi_arr.shape[2] * 50 + 50))
         inp, inp_idx = stage2_prepare(adc_arr, dwi_arr, idx=idx)
@@ -167,6 +168,11 @@ def stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr, adc_arr,
             for ii, (x, y) in enumerate(inp_idx):
                 perf_res[x, y] = stage2_perf_pred[ii]
                 nonperf_res[x, y] = stage2_nonperf_pred[ii]
+        temp = perf_res.flatten("C")
+        for t in temp:
+            if t == 0:
+                size0 += 1
+            size1 += 1
         perf_res = perf_res * perf_preds1[:, :, idx]
         nonperf_res = nonperf_res * nonperf_preds1[:, :, idx]
         perf_ress.append(perf_res)
@@ -174,7 +180,8 @@ def stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr, adc_arr,
     perf_ress = np.stack(perf_ress, axis=2)
     nonperf_ress = np.stack(nonperf_ress, axis=2)
     socketio.emit("process", "分析已完成！")
-    return perf_ress, nonperf_ress, max(0, np.sum(nonperf_ress > 0.2) / np.sum(perf_ress > 0.2) * 100 - 100)
+    return perf_ress, nonperf_ress, max(0, np.sum(nonperf_ress > 0.2) / np.sum(perf_ress > 0.2) * 100 - 100),(
+                size1 / (size1 + size0))
 
 
 def to_nii(data, affine):

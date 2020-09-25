@@ -975,6 +975,10 @@ def analyze():
                                 type: number
                                 format: float
                                 example: 120.0
+                            size:
+                                type: number
+                                format: float
+                                example: 0.05
         description: 成功
       fail:
         schema:
@@ -1021,7 +1025,7 @@ def analyze():
             perf_preds, nonperf_preds, info, size = stage2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr,
                                                            adc_arr, socketio)
         elif modelType == "U-Net":
-            perf_preds, nonperf_preds, info = stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr,
+            perf_preds, nonperf_preds, info, size = stage1_2(perf_model, nonperf_model, perf_clf, nonperf_clf, dwi_arr,
                                                        adc_arr, socketio)
         else:
             return failReturn("", "analyze出错, 请选择正确算法Random Forest 或者 U-Net")
